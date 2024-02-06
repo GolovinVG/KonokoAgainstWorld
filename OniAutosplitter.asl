@@ -153,6 +153,27 @@ update
 					killsperLevel[levelId2].Add(objectId);
 				}
 
+			
+			//Muro and Griffin fix
+			if (levelId2 == 13){
+				var name = game.ReadString(konokoPtr + 0x14, 10);
+
+				if (name.StartsWith("IntroMuro") &&  game.ReadValue<byte>(konokoPtr + 0x9) == 0xE1)
+				{
+					if (killsperLevel.ContainsKey(levelId2) == false)
+						killsperLevel.Add(levelId2, new HashSet<byte>());
+					killsperLevel[levelId2].Add(objectId);
+				}
+
+				if (name.StartsWith("griffin") &&  game.ReadValue<byte>(konokoPtr + 0x9) == 0xE1)
+				{
+					if (killsperLevel.ContainsKey(levelId2) == false)
+						killsperLevel.Add(levelId2, new HashSet<byte>());
+					killsperLevel[levelId2].Add(objectId);
+				}
+
+			}
+
         }
         konokoPtr += oniCharsBlockSize;
 
