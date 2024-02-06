@@ -117,6 +117,7 @@ update
     var aiFoundedCount = 0;
 
 	var killsperLevel = vars.KillsPerLevel as Dictionary<byte, HashSet<byte>>;
+	var isTrainingLevel = current.levelId == 1 && current.save_point == "";
 
     for (var i = 0; i < aiChecked.Length; i++)
     {
@@ -143,7 +144,7 @@ update
 			if (ais.ContainsKey(objectId) == false)
 				ais.Add(objectId, Tuple.Create(index, hp, activeState, fraction, levelId2));
 
-			if ((settings["EnableTrainingKillsCount"] || current.levelId != 1 || current.save_point != "")
+			if ((settings["EnableTrainingKillsCount"] || isTrainingLevel == false)
 			&&	hp == 0  && activeState == 0 
 			&& (fraction == 2 
 				|| (fraction == 1 || fraction == 4) && ais.First(x => x.Value.Item1 == 0).Value.Item4 == 5))
@@ -178,8 +179,8 @@ update
         konokoPtr += oniCharsBlockSize;
 
         isMainChar = false;
-
     }
+
 	current.KillsCount = killsperLevel.Sum(x => x.Value.Count);
 	current.KillsRecords = String.Join(", ", killsperLevel.Select(x => string.Format("{0}:{1}", x.Key, x.Value.Count())));   
 }
