@@ -43,6 +43,9 @@ state("Oni", "RU")
 startup {	
 	vars.juststarted = false;
 	vars.split = 0;
+
+	settings.Add("EnableKillsCount", true, "Enables Konoko's foe kills cointing", null);
+	settings.Add("EnableTrainingKillsCount", false, "Enables training level kills cointing", "EnableKillsCount");
 }
 
 init
@@ -66,6 +69,13 @@ init
 		print("EN");
 		version = "EN";
 	}
+
+	var page = modules.First();
+	vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x00236514);
+	vars.Ais = new Dictionary<byte, Tuple<byte, int, byte, byte, byte>>();
+	vars.KillsPerLevel = new Dictionary<byte, HashSet<byte>>();
+	current.KillsCount = 0;
+	current.KillsRecords = "";
 }
 
 update
@@ -78,6 +88,79 @@ update
 	vars.Konoko_Speed = current.speed;
 	vars.Konoko_HP_Shield = current.konoko_hp.ToString() + "/" + current.konoko_shield.ToString();
 	vars.Enemy_HP = current.enemy_hp;
+	
+
+	/// Kills Counting Block
+	
+	if (settings["EnableKillsCount"] == false)
+		return;
+	
+	IntPtr konokoPtr = vars.konokoPtr;
+    var gameIsLoading = game.ReadValue<byte>(konokoPtr + 0x14) == 0;	
+	
+	var page = modules.First();
+    var levelId2 = game.ReadValue<byte>(page.BaseAddress + 0x1ED398);
+	
+	var ais = vars.Ais as Dictionary<byte, Tuple<byte, int, byte, byte, byte>>;
+    if (gameIsLoading)
+    {
+		ais.Clear();
+        return;
+    }
+	
+	byte index = 0;
+    var isMainChar = true;
+
+	var oniCharsMaximumCount = 128;
+	var oniCharsBlockSize = 0x16A0;
+	var aiChecked = new byte[oniCharsMaximumCount];
+    var aiFoundedCount = 0;
+
+	var killsperLevel = vars.KillsPerLevel as Dictionary<byte, HashSet<byte>>;
+
+    for (var i = 0; i < aiChecked.Length; i++)
+    {
+        index = game.ReadValue<byte>(konokoPtr);
+        
+        if (index > 0 || isMainChar)
+        {
+            var hp = game.ReadValue<int>(konokoPtr + 0x38);
+            var objectId = game.ReadValue<byte>(konokoPtr + 0x1);
+            aiChecked[aiFoundedCount] = objectId;
+            aiFoundedCount++;
+            
+            var activeState = game.ReadValue<byte>(konokoPtr + 0x1F0); 
+            var fraction = game.ReadValue<byte>(konokoPtr + 0x12); 
+            
+			if (ais.Any() == false)
+			{
+				foreach (var level in killsperLevel.Keys.Where(x => x >= levelId2).ToArray())
+				{
+					killsperLevel.Remove(level);
+				}
+			}
+
+			if (ais.ContainsKey(objectId) == false)
+				ais.Add(objectId, Tuple.Create(index, hp, activeState, fraction, levelId2));
+
+			if ((settings["EnableTrainingKillsCount"] || current.levelId != 1 || current.save_point != "")
+			&&	hp == 0  && activeState == 0 
+			&& (fraction == 2 
+				|| (fraction == 1 || fraction == 4) && ais.First(x => x.Value.Item1 == 0).Value.Item4 == 5))
+				{
+					if (killsperLevel.ContainsKey(levelId2) == false)
+						killsperLevel.Add(levelId2, new HashSet<byte>());
+					killsperLevel[levelId2].Add(objectId);
+				}
+
+        }
+        konokoPtr += oniCharsBlockSize;
+
+        isMainChar = false;
+
+    }
+	current.KillsCount = killsperLevel.Sum(x => x.Value.Count);
+	current.KillsRecords = String.Join(", ", killsperLevel.Select(x => string.Format("{0}:{1}", x.Key, x.Value.Count())));   
 }
 
 start
@@ -141,7 +224,7 @@ split
 		if (current.endcheck == true)
 		{
 			print("THE END");
-			vars.split++;
+			vars.split++; 
 			return true;
 		}
 	}
@@ -169,6 +252,7 @@ reset
 			return true;
 		}
 	}
+	
 }
 
 gameTime
