@@ -204,6 +204,11 @@ start
 		print("START");
 		return true;
 	}
+	
+	vars.Ais = new Dictionary<byte, Tuple<byte, int, byte, byte, byte>>();
+	vars.KillsPerLevel = new Dictionary<byte, HashSet<byte>>();
+	current.KillsCount = 0;
+	current.KillsRecords = "";
 }
 
 split
