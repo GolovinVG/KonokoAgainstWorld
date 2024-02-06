@@ -41,6 +41,7 @@ state("Oni", "RU")
 }
 
 startup {	
+	vars.juststarted = false;
 	vars.split = 0;
 }
 
