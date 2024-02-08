@@ -46,6 +46,111 @@ startup {
 
 	settings.Add("EnableKillsCount", true, "Enables Konoko's foe kills cointing", null);
 	settings.Add("EnableTrainingKillsCount", false, "Enables training level kills cointing", "EnableKillsCount");
+	
+
+
+	dynamic level0 = new ExpandoObject();
+	level0.Index = 0;
+	level0.LocalIndex = 0;
+	level0.Name = "Training";
+
+	dynamic level1 = new ExpandoObject();
+	level1.Index = 1;
+	level1.LocalIndex = 1;
+	level1.Name = "Warehouse";
+
+	dynamic level2 = new ExpandoObject();
+	level2.Index = 2;
+	level2.LocalIndex = 2;
+	level2.Name = "Plant";
+
+	dynamic level3 = new ExpandoObject();
+	level3.Index = 3;
+	level3.LocalIndex = 3;
+	level3.Name = "Bio Lab";
+
+	dynamic level4 = new ExpandoObject();
+	level4.Index = 4;
+	level4.LocalIndex = 4;
+	level4.Name = "Airport";
+
+	dynamic level5 = new ExpandoObject();
+	level5.Index = 5;
+	level5.LocalIndex = 6;
+	level5.Name = "Hangars";
+
+	dynamic level6 = new ExpandoObject();
+	level6.Index = 6;
+	level6.LocalIndex = 8;
+	level6.Name = "Tctf I";
+
+	dynamic level7 = new ExpandoObject();
+	level7.Index = 7;
+	level7.LocalIndex = 9;
+	level7.Name = "Atm outter";
+
+	dynamic level8 = new ExpandoObject();
+	level8.Index = 8;
+	level8.LocalIndex = 10;
+	level8.Name = "Atm inner";
+
+	dynamic level9 = new ExpandoObject();
+	level9.Index = 9;
+	level9.LocalIndex = 11;
+	level9.Name = "State";
+
+	dynamic level10 = new ExpandoObject();
+	level10.Index = 10;
+	level10.LocalIndex = 12;
+	level10.Name = "Roofs";
+
+	dynamic level11 = new ExpandoObject();
+	level11.Index = 11;
+	level11.LocalIndex = 13;
+	level11.Name = "Dreams";
+
+	dynamic level12 = new ExpandoObject();
+	level12.Index = 12;
+	level12.LocalIndex = 14;
+	level12.Name = "Prison";
+
+	dynamic level13 = new ExpandoObject();
+	level13.Index = 13;
+	level13.LocalIndex = 18;
+	level13.Name = "Tctf II";
+
+	dynamic level14 = new ExpandoObject();
+	level14.Index = 14;
+	level14.LocalIndex = 19;
+	level14.Name = "Compound";
+
+
+	vars.Core = new ExpandoObject();
+
+	var levels = new List<ExpandoObject>();
+	vars.Core.Levels = levels;
+	
+	levels.Add(level0);
+	levels.Add(level1);
+	levels.Add(level2);
+	levels.Add(level3);
+	levels.Add(level4);
+	levels.Add(level5);
+	levels.Add(level6);
+	levels.Add(level7);
+	levels.Add(level8);
+	levels.Add(level9);
+	levels.Add(level10);
+	levels.Add(level11);
+	levels.Add(level12);
+	levels.Add(level13);
+	levels.Add(level14);
+
+	vars.Core.GetLevel = (Func<byte, bool, ExpandoObject>)((index, isLocal) => 
+			levels.First(x => index == (isLocal 
+			?((dynamic)x).LocalIndex 
+			: ((dynamic)x).Index))
+		);
 }
 
 init
@@ -65,17 +170,21 @@ init
 	}
 	else
 	{
-		// print(modules.First().ModuleMemorySize.ToString()); // 3092480
 		print("EN");
 		version = "EN";
 	}
 
 	var page = modules.First();
 	vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x00236514);
-	vars.Ais = new Dictionary<byte, Tuple<byte, int, byte, byte, byte>>();
-	vars.KillsPerLevel = new Dictionary<byte, HashSet<byte>>();
+
+	var killsPerLevel =  new HashSet<byte>[15];
+	for (var i = 0; i< killsPerLevel.Length; i++ ) killsPerLevel[i] = new HashSet<byte>();
+	vars.KillsPerLevel =killsPerLevel;
+	vars.lv13fix_MuroIndex = 0;
+	vars.lv13fix_GriffinIndex = 0;
 	current.KillsCount = 0;
 	current.KillsRecords = "";
+	vars.IsLoading = false;
 }
 
 update
@@ -90,99 +199,103 @@ update
 	vars.Enemy_HP = current.enemy_hp;
 	
 
-	/// Kills Counting Block
+	/// Kills Counting Block 
 	
 	if (settings["EnableKillsCount"] == false)
 		return;
 	
-	IntPtr konokoPtr = vars.konokoPtr;
-    var gameIsLoading = game.ReadValue<byte>(konokoPtr + 0x14) == 0;	
-	
 	var page = modules.First();
-    var levelId2 = game.ReadValue<byte>(page.BaseAddress + 0x1ED398);
-	
-	var ais = vars.Ais as Dictionary<byte, Tuple<byte, int, byte, byte, byte>>;
-    if (gameIsLoading)
-    {
-		ais.Clear();
-        return;
-    }
-	
-	byte index = 0;
-    var isMainChar = true;
-
+    var firstChrMonitored = false;
 	var oniCharsMaximumCount = 128;
 	var oniCharsBlockSize = 0x16A0;
-	var aiChecked = new byte[oniCharsMaximumCount];
-    var aiFoundedCount = 0;
+	var konokoFraction = 0;
 
-	var killsperLevel = vars.KillsPerLevel as Dictionary<byte, HashSet<byte>>;
-	var isTrainingLevel = current.levelId == 1 && current.save_point == "";
+	dynamic core = vars.Core;
 
-    for (var i = 0; i < aiChecked.Length; i++)
+
+	var currentLevelLocalIndex = current.levelId == 1 && current.save_point == "" ? 0 : current.levelId;
+
+	IntPtr konokoPtr = vars.konokoPtr;
+    var gameIsLoading = game.ReadValue<byte>(konokoPtr + 0x14) == 0 || current.levelId == 0;	
+	var killsperLevel = vars.KillsPerLevel as HashSet<byte>[];
+
+    if (gameIsLoading)
     {
-        index = game.ReadValue<byte>(konokoPtr);
-        
-        if (index > 0 || isMainChar)
-        {
-            var hp = game.ReadValue<int>(konokoPtr + 0x38);
-            var objectId = game.ReadValue<byte>(konokoPtr + 0x1);
-            aiChecked[aiFoundedCount] = objectId;
-            aiFoundedCount++;
-            
-            var activeState = game.ReadValue<byte>(konokoPtr + 0x1F0); 
-            var fraction = game.ReadValue<byte>(konokoPtr + 0x12); 
-            
-			if (ais.Any() == false)
-			{
-				foreach (var level in killsperLevel.Keys.Where(x => x >= levelId2).ToArray())
-				{
-					killsperLevel.Remove(level);
-				}
-			}
-
-			if (ais.ContainsKey(objectId) == false)
-				ais.Add(objectId, Tuple.Create(index, hp, activeState, fraction, levelId2));
-
-			if ((settings["EnableTrainingKillsCount"] || isTrainingLevel == false)
-			&&	hp == 0  && activeState == 0 
-			&& (fraction == 2 
-				|| (fraction == 1 || fraction == 4) && ais.First(x => x.Value.Item1 == 0).Value.Item4 == 5))
-				{
-					if (killsperLevel.ContainsKey(levelId2) == false)
-						killsperLevel.Add(levelId2, new HashSet<byte>());
-					killsperLevel[levelId2].Add(objectId);
-				}
-
-			
-			//Muro and Griffin fix
-			if (levelId2 == 13){
-				var name = game.ReadString(konokoPtr + 0x14, 10);
-
-				if (name.StartsWith("IntroMuro") &&  game.ReadValue<byte>(konokoPtr + 0x9) == 0xE1)
-				{
-					if (killsperLevel.ContainsKey(levelId2) == false)
-						killsperLevel.Add(levelId2, new HashSet<byte>());
-					killsperLevel[levelId2].Add(objectId);
-				}
-
-				if (name.StartsWith("griffin") &&  game.ReadValue<byte>(konokoPtr + 0x9) == 0xE1)
-				{
-					if (killsperLevel.ContainsKey(levelId2) == false)
-						killsperLevel.Add(levelId2, new HashSet<byte>());
-					killsperLevel[levelId2].Add(objectId);
-				}
-
-			}
-
-        }
-        konokoPtr += oniCharsBlockSize;
-
-        isMainChar = false;
+		vars.IsLoading = true;
+        return;
     }
 
-	current.KillsCount = killsperLevel.Sum(x => x.Value.Count);
-	current.KillsRecords = String.Join(", ", killsperLevel.Select(x => string.Format("{0}:{1}", x.Key, x.Value.Count())));   
+    dynamic currentLevel = core.GetLevel((byte)currentLevelLocalIndex, true);
+	int curentLevelIndex = currentLevel.Index;
+	if (vars.IsLoading){
+		print("postload");
+		for (var i = curentLevelIndex; i < killsperLevel.Length; i++)
+			if (killsperLevel[i].Any()) 
+				killsperLevel[i].Clear();
+
+		if (curentLevelIndex == 13){
+			vars.lv13fix_MuroIndex = 0;
+			vars.lv13fix_GriffinIndex = 0;
+		}
+
+	}
+	
+	vars.IsLoading = false;
+
+	var lv13fix_MuroIndex = 0;
+	var lv13fix_GriffinIndex = 0;
+    for (var i = 0; i < oniCharsMaximumCount; i++)
+    {
+        var index = game.ReadValue<byte>(konokoPtr);
+        
+		if (index == 0 && firstChrMonitored){
+			break;
+		}
+
+		var hp = game.ReadValue<int>(konokoPtr + 0x38);
+		var objectId = game.ReadValue<byte>(konokoPtr + 0x1);		
+		var activeState = game.ReadValue<byte>(konokoPtr + 0x1F0); 
+		var fraction = game.ReadValue<byte>(konokoPtr + 0x12); 
+		var name = game.ReadString(konokoPtr + 0x14, 10);
+
+		if (firstChrMonitored == false){
+			konokoFraction = fraction;
+		}
+		
+		if ((settings["EnableTrainingKillsCount"] || curentLevelIndex != 0)
+			&&	hp == 0 
+			&& (fraction == 2 
+				|| (fraction == 1 || fraction == 4) && konokoFraction == 5))
+				{
+					killsperLevel[curentLevelIndex].Add(objectId);
+				}		
+			
+		//Muro and Griffin fix
+		if (curentLevelIndex == 11){
+			if (name.StartsWith("IntroMuro"))
+			{
+				vars.lv13fix_MuroIndex = index;			
+				lv13fix_MuroIndex = index;	
+			}		
+
+			if (name.StartsWith("griffin"))
+			{
+				vars.lv13fix_GriffinIndex = index;
+				lv13fix_GriffinIndex = index;
+			}
+		}
+		firstChrMonitored = true;
+        konokoPtr += oniCharsBlockSize;
+    }
+
+	if (curentLevelIndex == 11){
+		if (vars.lv13fix_MuroIndex != 0 && lv13fix_MuroIndex == 0) killsperLevel[curentLevelIndex].Add(vars.lv13fix_MuroIndex);
+		if (vars.lv13fix_GriffinIndex != 0 && lv13fix_GriffinIndex == 0) killsperLevel[curentLevelIndex].Add(vars.lv13fix_GriffinIndex);
+	}
+	current.KillsCount = killsperLevel.Take(curentLevelIndex + 1).Sum(x => x.Count());
+	for	(var i = 0; i < killsperLevel.Length; i++){
+		//print("" +string.Join(",", killsperLevel[i]));
+	} 
 }
 
 start
@@ -206,8 +319,6 @@ start
 		return true;
 	}
 	
-	vars.Ais = new Dictionary<byte, Tuple<byte, int, byte, byte, byte>>();
-	vars.KillsPerLevel = new Dictionary<byte, HashSet<byte>>();
 	current.KillsCount = 0;
 	current.KillsRecords = "";
 }
