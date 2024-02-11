@@ -158,7 +158,6 @@ init
 {	
 	timer.IsGameTimePaused = false;
 	game.Exited += (s, e) => timer.IsGameTimePaused = true;
-
 	vars.Konoko_Speed = 0;
 	vars.Konoko_HP_Shield = "0/0";
 	vars.Enemy_HP = 0;
@@ -187,6 +186,7 @@ init
 	current.IsLoaded = false;
 	current.KillsCount = 0;
 	current.LevelIndex = 0;
+	current.split = 0;
 }
 
 update
@@ -308,6 +308,10 @@ start
 	return false;
 }
 
+onStart{
+	current.split = 0;
+}
+
 reset
 {
 	if (current.levelId == 1 &&
@@ -326,8 +330,13 @@ reset
 split
 {
 	if (old.LevelIndex == 0 && current.LevelIndex != 0 
-		|| current.LevelIndex == 14 && current.save_point.Contains("4") && current.endcheck == true)
+		&& current.split + 1 == current.LevelIndex 
+		&& (current.save_point == "" || current.save_point == "Syndicate Warehouse") 
+		|| current.LevelIndex == 14 
+		&& current.save_point.Contains("4") 
+		&& current.endcheck == true)
 	{
+		current.split++;
 		print("Split");
 		return true;
 	}
@@ -337,16 +346,15 @@ isLoading {
 	if  (current.time == old.time 
 		|| current.time == 0 
 		|| current.IsLoading
-		|| current.chrActive == 0 && (
-			current.levelId != 1 ||
-			current.save_point != ""
-		)
+		|| current.chrActive == 0 
+		&& (current.levelId != 1 
+			|| current.save_point != "")
 		|| current.igtPause == 0 
 		|| current.chrBusy  
 		|| current.dialog == 0x1081E000
 		|| (current.level == 6  
-		&& !current.save_point.Contains("0") 
-		&& current.level5_endCutscene))
+			&& !current.save_point.Contains("0") 
+			&& current.level5_endCutscene))
 		return true; 
 	return false;
 } 
