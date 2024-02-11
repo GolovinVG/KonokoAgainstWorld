@@ -21,6 +21,8 @@ state("Oni", "EN")
 	int dialog : 0x236514, 0x04;
 	int level : 0x1ED398;
 	bool level5_endCutscene : 0x1ECE92;
+	byte chrActive : 0x1ECC54;
+	bool chrBusy : 0x1EC0C4;
 }
 
 state("Oni", "RU")
@@ -178,18 +180,23 @@ init
 
 	var killsPerLevel =  new HashSet<byte>[15];
 	for (var i = 0; i< killsPerLevel.Length; i++ ) killsPerLevel[i] = new HashSet<byte>();
-	vars.KillsPerLevel =killsPerLevel;
+	vars.KillsPerLevel = killsPerLevel;
 	vars.lv13fix_MuroIndex = 0;
 	vars.lv13fix_GriffinIndex = 0;
+	current.IsLoading = false;
+	current.IsLoaded = false;
 	current.KillsCount = 0;
-	vars.IsLoading = false;
+	current.LevelIndex = 0;
 }
 
 update
 {
-	current.coord_xpow = (float)Math.Pow(current.coord_x, 2);
-	current.coord_ypow = (float)Math.Pow(current.coord_y, 2);
-	current.speed = Math.Round((Decimal)(float)Math.Sqrt(current.coord_xpow + current.coord_ypow), 2, MidpointRounding.AwayFromZero);
+	dynamic core = vars.Core;
+	IntPtr konokoPtr = vars.konokoPtr;
+
+	var coord_xpow = (float)Math.Pow(current.coord_x, 2);
+	var coord_ypow = (float)Math.Pow(current.coord_y, 2);
+	current.speed = Math.Round((Decimal)(float)Math.Sqrt(coord_xpow + coord_ypow), 2, MidpointRounding.AwayFromZero);
 	current.speed = (int)(current.speed * 100);
 	
 	vars.Konoko_Speed = current.speed;
@@ -197,10 +204,19 @@ update
 	vars.Enemy_HP = current.enemy_hp;
 	
 
-	/// Kills Counting Block 
+	var currentLevelInGameIndex = current.levelId == 1 && current.save_point == "" ? 0 : current.levelId;
+
+    dynamic currentLevel = core.FindLevel((byte)currentLevelInGameIndex);
+	int curentLevelIndex = currentLevel.Index;
+	current.LevelIndex = curentLevelIndex;
 	
+	current.IsLoading = game.ReadValue<byte>(konokoPtr + 0x14) == 0; // Konoko briefly lose her name on level loading
+	current.isLoaded = old.IsLoaded == false && current.LevelIndex != old.LevelIndex && old.LevelIndex == 0
+		|| (current.LevelIndex == 0 && current.save_point == "" &&
+			current.anim == 0xC3A90FA5C48C7D82);
+	/// Kills Counting Block   
 	if (settings["EnableKillsCount"] == false)
-		return;
+		return; 
 	
 	var page = modules.First();
     var firstChrMonitored = false;
@@ -208,25 +224,9 @@ update
 	var oniCharsBlockSize = 0x16A0;
 	var konokoFraction = 0; // 0 - konoko, 1 - TCTF, 2 - Cynd, 3 - Civilian, 4 - guard, 5 - Rogue Konoko, 6 - ?, 7 - unagressive Cyndicate
 
-	dynamic core = vars.Core;
-
-
-	var currentLevelInGameIndex = current.levelId == 1 && current.save_point == "" ? 0 : current.levelId;
-
-	IntPtr konokoPtr = vars.konokoPtr;
-    var gameIsLoading = game.ReadValue<byte>(konokoPtr + 0x14) == 0 || current.levelId == 0;	
 	var killsperLevel = vars.KillsPerLevel as HashSet<byte>[];
 
-    if (gameIsLoading)
-    {
-		vars.IsLoading = true;
-        return;
-    }
-
-    dynamic currentLevel = core.FindLevel((byte)currentLevelInGameIndex);
-	int curentLevelIndex = currentLevel.Index;
-	if (vars.IsLoading){
-		print("postload");
+	if (current.IsLoaded){
 		for (var i = curentLevelIndex; i < killsperLevel.Length; i++)
 			if (killsperLevel[i].Any()) 
 				killsperLevel[i].Clear();
@@ -235,10 +235,7 @@ update
 			vars.lv13fix_MuroIndex = 0;
 			vars.lv13fix_GriffinIndex = 0;
 		}
-
 	}
-	
-	vars.IsLoading = false;
 
 	var lv13fix_MuroIndex = 0;
 	var lv13fix_GriffinIndex = 0;
@@ -269,7 +266,7 @@ update
 					killsperLevel[curentLevelIndex].Add(objectId);
 				}		
 			
-		//Muro and Griffin fix. on DD game just delete them, leaves no record with 0 hp
+		//Muro and Griffin fix. on DD game just delete them, leaves no record with 0 hp 
 		if (curentLevelIndex == 11){
 			if (name.StartsWith("IntroMuro"))
 			{
@@ -292,166 +289,64 @@ update
 		if (vars.lv13fix_GriffinIndex != 0 && lv13fix_GriffinIndex == 0) killsperLevel[curentLevelIndex].Add(vars.lv13fix_GriffinIndex);
 	}
 	current.KillsCount = killsperLevel.Sum(x => x.Count());
+	
 }
 
 start
 {
-	current.GameTime = TimeSpan.Zero;
-	vars.totalGameTime = 0;
-	vars.subtractTime = 0;
-	vars.cutsceneTime = 0;
-	vars.cutsceneTimeStamp = 0;
-	vars.currentTime = 0;
-	
 	if (current.levelId == 1 &&
 		current.save_point == "" &&
-		current.anim == 0xC3A90FA5C48C7D82)
+		current.anim == 0xC3A90FA5C48C7D82 && (
+			old.levelId != 1 ||
+			old.save_point != "" ||
+			old.anim != 0xC3A90FA5C48C7D82
+		))
 	{
-		vars.split = 0;
-		vars.totalGameTime = 0.01;
-		vars.juststarted = true;
-		vars.justsplitted = false;
 		print("START");
 		return true;
 	}
-}
-
-split
-{
-	if (vars.split == 0 && current.levelId == 1) // Level 1
-	{
-		if (current.endcheck == true && current.anim != 0xC3A90FA5C48C7D82)
-		{
-			vars.split++;
-			vars.justsplitted = true;
-			return true;
-		}
-	}
-	else if (
-				(vars.split == 1 && current.levelId == 2) ||
-				(vars.split == 2 && current.levelId == 3) ||
-				(vars.split == 3 && current.levelId == 4) ||
-				(vars.split == 4 && current.levelId == 6) ||
-				(vars.split == 5 && current.levelId == 8) ||
-				(vars.split == 6 && current.levelId == 9) ||
-				(vars.split == 7 && current.levelId == 10) ||
-				(vars.split == 8 && current.levelId == 11) ||
-				(vars.split == 9 && current.levelId == 12) ||
-				(vars.split == 10 && current.levelId == 13) ||
-				(vars.split == 11 && current.levelId == 14) ||
-				(vars.split == 12 && current.levelId == 18) ||
-				(vars.split == 13 && current.levelId == 19)
-			)
-	{
-		if (current.save_point == "")
-		{
-			vars.split++;
-			vars.justsplitted = true;
-			return true;
-		}
-	}
-	else if (vars.split == 14 && current.levelId == 19 && current.save_point.Contains("4") ) // END
-	{
-		if (current.endcheck == true)
-		{
-			print("THE END");
-			vars.split++; 
-			return true;
-		}
-	}
+	return false;
 }
 
 reset
 {
-	if(vars.juststarted == false)
+	if (current.levelId == 1 &&
+		current.save_point == "" &&
+		current.anim == 0xC3A90FA5C48C7D82 && (
+			old.levelId != 1 ||
+			old.save_point != "" ||
+			old.anim != 0xC3A90FA5C48C7D82
+		)) 
 	{
-		if (current.levelId == 1 &&
-			current.save_point == "" &&
-			current.anim == 0xC3A90FA5C48C7D82)
-		{
-			current.GameTime = TimeSpan.Zero;
-			vars.totalGameTime = 0.01;
-			vars.subtractTime = 0;
-			vars.cutsceneTime = 0;
-			vars.cutsceneTimeStamp = 0;
-			vars.currentTime = 0;
-			vars.juststarted = true;
-			vars.justsplitted = false;			
-			vars.split = 0;
-			
-			print("RESET");
-			return true;
-		}
-	}
-	
+		print("RESET");
+		return true;	
+	}	
 }
 
-gameTime
+split
 {
-	try{
-		if(vars.totalGameTime > 0)
-		{
-			if (current.anim != 0xC3A90FA5C48C7D82)
-			{
-				vars.juststarted = false;
-			}
-			
-			if(Convert.ToSingle(current.time) / 60 == 0)
-			{
-				vars.totalGameTime += vars.currentTime;	
-				vars.totalGameTime -= vars.subtractTime;
-				vars.totalGameTime -= vars.cutsceneTime;
-				vars.currentTime = 0;
-				vars.subtractTime = 0;
-				vars.cutsceneTime = 0;
-				vars.cutsceneTimeStamp = 0;			
-			}
-			else
-			{
-				vars.currentTime = Convert.ToSingle(current.time) / 60;
-			}
-			
-			// Pause during Shinatama intro on training
-			if (vars.split == 0 && vars.totalGameTime == 0.01)
-			{
-				if (current.igtPause == 0)
-				{
-					vars.subtractTime = vars.currentTime;
-					return TimeSpan.FromSeconds(0);
-				}
-			}
-			
-			// Fix timer not paused between L0 and L1
-			if (vars.split == 0 && vars.currentTime < 1)
-			{
-				vars.justsplitted = true;
-			}
-			
-			if (current.igtPause == 0 || !current.cutscene || current.dialog == 0x1081E000 || vars.justsplitted || (current.level == 6 && !current.save_point.Contains("0") && current.level5_endCutscene))
-			{
-				if (vars.cutsceneTimeStamp == 0)
-					vars.cutsceneTimeStamp = vars.currentTime;
-					
-				vars.cutsceneTime = vars.currentTime - vars.cutsceneTimeStamp;
-			}
-			else
-			{
-				vars.subtractTime += vars.cutsceneTime;
-				vars.cutsceneTime = 0;
-				vars.cutsceneTimeStamp = 0;
-			}
-			
-			// Fix timer not paused somewhere between loading screen and cutscene on a new level
-			if (vars.justsplitted)
-			{
-				if (old.igtPause == 0 && current.igtPause != 0)
-					vars.justsplitted = false;
-			}
-			
-			// print("ONI TIME " + vars.totalGameTime.ToString() + " " + vars.currentTime.ToString() + " " + vars.subtractTime.ToString() + " " + vars.cutsceneTime.ToString());
-				
-			return TimeSpan.FromSeconds(vars.totalGameTime + vars.currentTime - vars.subtractTime - vars.cutsceneTime);
-		}
+	if (old.LevelIndex == 0 && current.LevelIndex != 0 
+		|| current.LevelIndex == 14 && current.save_point.Contains("4") && current.endcheck == true)
+	{
+		print("Split");
+		return true;
 	}
-	catch {}
 }
+
+isLoading {
+	if  (current.time == old.time 
+		|| current.time == 0 
+		|| current.IsLoading
+		|| current.chrActive == 0 && (
+			current.levelId != 1 ||
+			current.save_point != ""
+		)
+		|| current.igtPause == 0 
+		|| current.chrBusy  
+		|| current.dialog == 0x1081E000
+		|| (current.level == 6  
+		&& !current.save_point.Contains("0") 
+		&& current.level5_endCutscene))
+		return true; 
+	return false;
+} 
