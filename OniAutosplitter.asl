@@ -47,83 +47,80 @@ startup {
 	settings.Add("EnableKillsCount", true, "Enables Konoko's foe kills cointing", null);
 	settings.Add("EnableTrainingKillsCount", false, "Enables training level kills cointing", "EnableKillsCount");
 	
-
-
 	dynamic level0 = new ExpandoObject();
 	level0.Index = 0;
-	level0.LocalIndex = 0;
+	level0.InGameIndex = 0;
 	level0.Name = "Training";
 
 	dynamic level1 = new ExpandoObject();
 	level1.Index = 1;
-	level1.LocalIndex = 1;
+	level1.InGameIndex = 1;
 	level1.Name = "Warehouse";
 
 	dynamic level2 = new ExpandoObject();
 	level2.Index = 2;
-	level2.LocalIndex = 2;
+	level2.InGameIndex = 2;
 	level2.Name = "Plant";
 
 	dynamic level3 = new ExpandoObject();
 	level3.Index = 3;
-	level3.LocalIndex = 3;
+	level3.InGameIndex = 3;
 	level3.Name = "Bio Lab";
 
 	dynamic level4 = new ExpandoObject();
 	level4.Index = 4;
-	level4.LocalIndex = 4;
+	level4.InGameIndex = 4;
 	level4.Name = "Airport";
 
 	dynamic level5 = new ExpandoObject();
 	level5.Index = 5;
-	level5.LocalIndex = 6;
+	level5.InGameIndex = 6;
 	level5.Name = "Hangars";
 
 	dynamic level6 = new ExpandoObject();
 	level6.Index = 6;
-	level6.LocalIndex = 8;
+	level6.InGameIndex = 8;
 	level6.Name = "Tctf I";
 
 	dynamic level7 = new ExpandoObject();
 	level7.Index = 7;
-	level7.LocalIndex = 9;
+	level7.InGameIndex = 9;
 	level7.Name = "Atm outter";
 
 	dynamic level8 = new ExpandoObject();
 	level8.Index = 8;
-	level8.LocalIndex = 10;
+	level8.InGameIndex = 10;
 	level8.Name = "Atm inner";
 
 	dynamic level9 = new ExpandoObject();
 	level9.Index = 9;
-	level9.LocalIndex = 11;
+	level9.InGameIndex = 11;
 	level9.Name = "State";
 
 	dynamic level10 = new ExpandoObject();
 	level10.Index = 10;
-	level10.LocalIndex = 12;
+	level10.InGameIndex = 12;
 	level10.Name = "Roofs";
 
 	dynamic level11 = new ExpandoObject();
 	level11.Index = 11;
-	level11.LocalIndex = 13;
+	level11.InGameIndex = 13;
 	level11.Name = "Dreams";
 
 	dynamic level12 = new ExpandoObject();
 	level12.Index = 12;
-	level12.LocalIndex = 14;
+	level12.InGameIndex = 14;
 	level12.Name = "Prison";
 
 	dynamic level13 = new ExpandoObject();
 	level13.Index = 13;
-	level13.LocalIndex = 18;
+	level13.InGameIndex = 18;
 	level13.Name = "Tctf II";
 
 	dynamic level14 = new ExpandoObject();
 	level14.Index = 14;
-	level14.LocalIndex = 19;
+	level14.InGameIndex = 19;
 	level14.Name = "Compound";
-
 
 	vars.Core = new ExpandoObject();
 
@@ -146,10 +143,12 @@ startup {
 	levels.Add(level13);
 	levels.Add(level14);
 
-	vars.Core.GetLevel = (Func<byte, bool, ExpandoObject>)((index, isLocal) => 
-			levels.First(x => index == (isLocal 
-			?((dynamic)x).LocalIndex 
-			: ((dynamic)x).Index))
+	vars.Core.GetLevel = (Func<byte, ExpandoObject>)((index) => 
+			levels.First(x => index == ((dynamic)x).Index)
+		);
+
+	vars.Core.FindLevel = (Func<byte, ExpandoObject>)((inGameIndex) => 
+			levels.First(x => inGameIndex == ((dynamic)x).InGameIndex) 
 		);
 }
 
@@ -183,7 +182,6 @@ init
 	vars.lv13fix_MuroIndex = 0;
 	vars.lv13fix_GriffinIndex = 0;
 	current.KillsCount = 0;
-	current.KillsRecords = "";
 	vars.IsLoading = false;
 }
 
@@ -208,12 +206,12 @@ update
     var firstChrMonitored = false;
 	var oniCharsMaximumCount = 128;
 	var oniCharsBlockSize = 0x16A0;
-	var konokoFraction = 0;
+	var konokoFraction = 0; // 0 - konoko, 1 - TCTF, 2 - Cynd, 3 - Civilian, 4 - guard, 5 - Rogue Konoko, 6 - ?, 7 - unagressive Cyndicate
 
 	dynamic core = vars.Core;
 
 
-	var currentLevelLocalIndex = current.levelId == 1 && current.save_point == "" ? 0 : current.levelId;
+	var currentLevelInGameIndex = current.levelId == 1 && current.save_point == "" ? 0 : current.levelId;
 
 	IntPtr konokoPtr = vars.konokoPtr;
     var gameIsLoading = game.ReadValue<byte>(konokoPtr + 0x14) == 0 || current.levelId == 0;	
@@ -225,7 +223,7 @@ update
         return;
     }
 
-    dynamic currentLevel = core.GetLevel((byte)currentLevelLocalIndex, true);
+    dynamic currentLevel = core.FindLevel((byte)currentLevelInGameIndex);
 	int curentLevelIndex = currentLevel.Index;
 	if (vars.IsLoading){
 		print("postload");
@@ -246,17 +244,17 @@ update
 	var lv13fix_GriffinIndex = 0;
     for (var i = 0; i < oniCharsMaximumCount; i++)
     {
-        var index = game.ReadValue<byte>(konokoPtr);
+        var index = game.ReadValue<byte>(konokoPtr); // Chr list index, from 0 - konoko to max 128. May be gaps, the game could fill gaps.
         
 		if (index == 0 && firstChrMonitored){
-			break;
+			continue;
 		}
 
-		var hp = game.ReadValue<int>(konokoPtr + 0x38);
-		var objectId = game.ReadValue<byte>(konokoPtr + 0x1);		
-		var activeState = game.ReadValue<byte>(konokoPtr + 0x1F0); 
-		var fraction = game.ReadValue<byte>(konokoPtr + 0x12); 
-		var name = game.ReadString(konokoPtr + 0x14, 10);
+		var hp = game.ReadValue<int>(konokoPtr + 0x38); // HP, yep
+		var objectId = game.ReadValue<byte>(konokoPtr + 0x1); // Object ID, id qnique during 1 level session (till load/reload). It's not gurantee same id for same enemy
+		var activeState = game.ReadValue<byte>(konokoPtr + 0x1F0); // 0 - dead, 1 - ready to fight, 3 - inactive
+		var fraction = game.ReadValue<byte>(konokoPtr + 0x12); // see konoko fraction
+		var name = game.ReadString(konokoPtr + 0x14, 10); // I think 10 is enough
 
 		if (firstChrMonitored == false){
 			konokoFraction = fraction;
@@ -265,12 +263,13 @@ update
 		if ((settings["EnableTrainingKillsCount"] || curentLevelIndex != 0)
 			&&	hp == 0 
 			&& (fraction == 2 
-				|| (fraction == 1 || fraction == 4) && konokoFraction == 5))
+				|| (fraction == 1 || fraction == 4) && konokoFraction == 5)
+				|| konokoFraction == 2 && curentLevelIndex == 0) // training level fraction swap
 				{
 					killsperLevel[curentLevelIndex].Add(objectId);
 				}		
 			
-		//Muro and Griffin fix
+		//Muro and Griffin fix. on DD game just delete them, leaves no record with 0 hp
 		if (curentLevelIndex == 11){
 			if (name.StartsWith("IntroMuro"))
 			{
@@ -292,10 +291,7 @@ update
 		if (vars.lv13fix_MuroIndex != 0 && lv13fix_MuroIndex == 0) killsperLevel[curentLevelIndex].Add(vars.lv13fix_MuroIndex);
 		if (vars.lv13fix_GriffinIndex != 0 && lv13fix_GriffinIndex == 0) killsperLevel[curentLevelIndex].Add(vars.lv13fix_GriffinIndex);
 	}
-	current.KillsCount = killsperLevel.Take(curentLevelIndex + 1).Sum(x => x.Count());
-	for	(var i = 0; i < killsperLevel.Length; i++){
-		//print("" +string.Join(",", killsperLevel[i]));
-	} 
+	current.KillsCount = killsperLevel.Sum(x => x.Count());
 }
 
 start
@@ -318,9 +314,6 @@ start
 		print("START");
 		return true;
 	}
-	
-	current.KillsCount = 0;
-	current.KillsRecords = "";
 }
 
 split
