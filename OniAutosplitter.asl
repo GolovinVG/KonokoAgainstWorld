@@ -419,3 +419,12 @@ isLoading {
 	return current.potentialLoadingBlindPoint ;
 
 } 
+
+gameTime{
+	// no extra milliseconds on start
+	var  currentLevelInGameIndex = vars.Core.GetIngameLevelId(); 
+    dynamic currentLevel = vars.Core.FindLevel((byte)currentLevelInGameIndex);
+	if (currentLevel.Index == 0) 
+		if (vars.Core.TrainingLevel.HelloKonoko())
+			return TimeSpan.Zero; 
+}
