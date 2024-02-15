@@ -21,11 +21,19 @@ state("Oni", "EN")
 	int dialog : 0x236514, 0x04;
 	int level : 0x1ED398;
 	bool level5_endCutscene : 0x1ECE92;
-	byte chrActive : 0x1ECC54;
-	bool chrBusy : 0x1EC0C4;
+
+	long keysLocked: 0x1ECE7C, 0x1679B0; 
+
+	//HAs potential
+	//byte chrActive : 0x1ECC54;
+	byte chrActive1 : 0x14D64C;
+	byte chrActive : 0x13D878; //catched by death screen
+	byte chrActive0 : 0x15FD44; //level loading by death screen
+	bool chrBusy : 0x1EC0C4; 
+	bool pausedByPlayer: 0x1E96BC;
 }
 
-state("Oni", "RU")
+state("Oni", "RU") 
 {
 	int levelId : 0x1E8C38;
 	ulong anim : 0x1E70C4;
@@ -152,11 +160,11 @@ startup {
 	vars.Core.FindLevel = (Func<byte, ExpandoObject>)((inGameIndex) => 
 			levels.First(x => inGameIndex == ((dynamic)x).InGameIndex) 
 		);
-}
 
+}
+ 
 init
 {	
-	timer.IsGameTimePaused = false;
 	game.Exited += (s, e) => timer.IsGameTimePaused = true;
 	vars.Konoko_Speed = 0;
 	vars.Konoko_HP_Shield = "0/0";
@@ -175,21 +183,50 @@ init
 	}
 
 	var page = modules.First();
-	vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x00236514);
+	vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x00236514); // konoko firs in character list
+
+	current.IsLoading = false;
+	current.IsLoaded = false;
+	current.KillsCount = 0;
+	current.LevelIndex = 0;
+	current.split = 0;
+	current.dbg_isLoading = 0;
+	current.dbg_update = 0;
+	current.potentialLoadingBlindPoint = false; // between levels there is point where no obvious markings available, so after loadings until we have any marking we have to pause
 
 	var killsPerLevel =  new HashSet<byte>[15];
 	for (var i = 0; i< killsPerLevel.Length; i++ ) killsPerLevel[i] = new HashSet<byte>();
 	vars.KillsPerLevel = killsPerLevel;
 	vars.lv13fix_MuroIndex = 0;
 	vars.lv13fix_GriffinIndex = 0;
-	current.IsLoading = false;
-	current.IsLoaded = false;
-	current.KillsCount = 0;
-	current.LevelIndex = 0;
-	current.split = 0;
+	
+	vars.Core.GamePaused = (Func<bool>)(() =>
+		current.pausedByPlayer || current.time == 0
+	);
+	vars.Core.LevelIsLoading = (Func<bool>)(() =>
+		current.chrBusy || current.chrActive != 1|| current.chrActive0 != 1  || current.IsLoading);
+	vars.Core.CutsceneIsPlaying = (Func<bool>)(() =>
+		current.igtPause == 0 || current.level5_endCutscene
+		);
+	vars.Core.PlayerHasNoControl = (Func<bool>)(() => 
+		current.keysLocked == 0x10007 // unlock pause only  
+		|| current.keysLocked == 0x10003 // lockall 
+	);
+	vars.Core.UnscippableDialogue = (Func<bool>)(() =>
+		current.dialog == 0x1081E000
+	);
+	 
+	// first level and training are same, so let introduse fake 0 index
+	vars.Core.GetIngameLevelId = (Func<byte>)(() =>
+		current.levelId == 1 && current.save_point == "" ? (byte)0 : (byte)current.levelId 
+	);
+	vars.Core.TrainingLevel = new ExpandoObject();
+	vars.Core.TrainingLevel.HelloKonoko = (Func<bool>)(() =>
+		current.anim == 0xC3A90FA5C48C7D82
+	);
 }
 
-update
+update 
 {
 	dynamic core = vars.Core;
 	IntPtr konokoPtr = vars.konokoPtr;
@@ -211,11 +248,15 @@ update
 	current.LevelIndex = curentLevelIndex;
 	
 	current.IsLoading = game.ReadValue<byte>(konokoPtr + 0x14) == 0; // Konoko briefly lose her name on level loading
-	current.isLoaded = old.IsLoaded == false && current.LevelIndex != old.LevelIndex && old.LevelIndex == 0
+	current.isLoaded = old.IsLoaded == false && (current.LevelIndex != old.LevelIndex && current.LevelIndex != 0
 		|| (current.LevelIndex == 0 && current.save_point == "" &&
-			current.anim == 0xC3A90FA5C48C7D82);
-	/// Kills Counting Block   
-	if (settings["EnableKillsCount"] == false)
+			current.anim == 0xC3A90FA5C48C7D82)); 
+
+	if (current.isLoaded && current.potentialLoadingBlindPoint == false)
+		current.potentialLoadingBlindPoint = true; 
+
+	/// Kills Counting Block  
+	if (settings["EnableKillsCount"] == false) 
 		return; 
 	
 	var page = modules.First();
@@ -259,16 +300,16 @@ update
 		
 		if ((settings["EnableTrainingKillsCount"] || curentLevelIndex != 0)
 			&&	hp == 0 
-			&& (fraction == 2 
-				|| (fraction == 1 || fraction == 4) && konokoFraction == 5)
-				|| konokoFraction == 2 && curentLevelIndex == 0) // training level fraction swap
+			&& (fraction == 2  
+				|| (fraction == 1 || fraction == 4) && konokoFraction == 5
+				|| konokoFraction == 2 && curentLevelIndex == 0)) // training level fraction swap
 				{
 					killsperLevel[curentLevelIndex].Add(objectId);
 				}		
 			
 		//Muro and Griffin fix. on DD game just delete them, leaves no record with 0 hp 
 		if (curentLevelIndex == 11){
-			if (name.StartsWith("IntroMuro"))
+			if (name.StartsWith("IntroMuro"))  
 			{
 				vars.lv13fix_MuroIndex = index;			
 				lv13fix_MuroIndex = index;	
@@ -288,8 +329,12 @@ update
 		if (vars.lv13fix_MuroIndex != 0 && lv13fix_MuroIndex == 0) killsperLevel[curentLevelIndex].Add(vars.lv13fix_MuroIndex);
 		if (vars.lv13fix_GriffinIndex != 0 && lv13fix_GriffinIndex == 0) killsperLevel[curentLevelIndex].Add(vars.lv13fix_GriffinIndex);
 	}
-	current.KillsCount = killsperLevel.Sum(x => x.Count());
-	
+
+
+	/*for(var i = 0; i < killsperLevel.Length; i++)
+		if (killsperLevel[i].Any())
+			print(string.Format("{0}: {1}", i, string.Join(", ", killsperLevel[i])));*/
+	current.KillsCount = killsperLevel.Sum(x => x.Count()); 
 }
 
 start
@@ -310,6 +355,7 @@ start
 
 onStart{
 	current.split = 0;
+	current.potentialLoadingBlindPoint = false;
 }
 
 reset
@@ -343,18 +389,33 @@ split
 }
 
 isLoading {
-	if  (current.time == old.time 
-		|| current.time == 0 
-		|| current.IsLoading
-		|| current.chrActive == 0 
-		&& (current.levelId != 1 
-			|| current.save_point != "")
-		|| current.igtPause == 0 
-		|| current.chrBusy  
-		|| current.dialog == 0x1081E000
-		|| (current.level == 6  
-			&& !current.save_point.Contains("0") 
-			&& current.level5_endCutscene))
-		return true; 
-	return false;
+
+	var  currentLevelInGameIndex = vars.Core.GetIngameLevelId(); 
+
+    dynamic currentLevel = vars.Core.FindLevel((byte)currentLevelInGameIndex);
+	if (currentLevel.Index == 0){
+		if (vars.Core.TrainingLevel.HelloKonoko()
+			|| vars.Core.LevelIsLoading()
+			|| vars.Core.CutsceneIsPlaying()
+			|| vars.Core.UnscippableDialogue())
+			return true;
+		current.potentialLoadingBlindPoint = false;
+		return false; 
+	} 
+	if (vars.Core.CutsceneIsPlaying()		
+		|| vars.Core.UnscippableDialogue()){ 
+			current.potentialLoadingBlindPoint = false;
+			return true ;	
+		}
+	// Unconditional pause
+	if (vars.Core.GamePaused()
+		|| vars.Core.PlayerHasNoControl()
+		|| vars.Core.LevelIsLoading())
+		return true;
+	
+	if (current.save_point != "" && current.save_point != "Syndicate Warehouse")
+		current.potentialLoadingBlindPoint = false;
+
+	return current.potentialLoadingBlindPoint ;
+
 } 
