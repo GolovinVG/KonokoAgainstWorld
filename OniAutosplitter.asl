@@ -197,8 +197,8 @@ init
 	var killsPerLevel =  new HashSet<byte>[15];
 	for (var i = 0; i< killsPerLevel.Length; i++ ) killsPerLevel[i] = new HashSet<byte>();
 	vars.KillsPerLevel = killsPerLevel;
-	vars.lv13fix_MuroIndex = 0;
-	vars.lv13fix_GriffinIndex = 0;
+	current.lv11fix_MuroIndex = 0;
+	current.lv11fix_GriffinIndex = 0;
 	
 	vars.Core.GamePaused = (Func<bool>)(() =>
 		current.pausedByPlayer || current.time == 0
@@ -209,7 +209,7 @@ init
 		current.igtPause == 0 || current.level5_endCutscene
 		);
 	vars.Core.PlayerHasNoControl = (Func<bool>)(() => 
-		current.keysLocked == 0x10007 // unlock pause only  
+		current.keysLocked == 0x10007 // unlock pause only 
 		|| current.keysLocked == 0x10003 // lockall 
 	);
 	vars.Core.UnscippableDialogue = (Func<bool>)(() =>
@@ -248,11 +248,11 @@ update
 	current.LevelIndex = curentLevelIndex;
 	
 	current.IsLoading = game.ReadValue<byte>(konokoPtr + 0x14) == 0; // Konoko briefly lose her name on level loading
-	current.isLoaded = old.IsLoaded == false && (current.LevelIndex != old.LevelIndex && current.LevelIndex != 0
+	current.IsLoaded = old.IsLoaded == false && (current.LevelIndex != old.LevelIndex && current.LevelIndex != 0
 		|| (current.LevelIndex == 0 && current.save_point == "" &&
 			current.anim == 0xC3A90FA5C48C7D82)); 
 
-	if (current.isLoaded && current.potentialLoadingBlindPoint == false)
+	if (current.IsLoaded && current.potentialLoadingBlindPoint == false)
 		current.potentialLoadingBlindPoint = true; 
 
 	/// Kills Counting Block  
@@ -264,27 +264,28 @@ update
 	var oniCharsMaximumCount = 128;
 	var oniCharsBlockSize = 0x16A0;
 	var konokoFraction = 0; // 0 - konoko, 1 - TCTF, 2 - Cynd, 3 - Civilian, 4 - guard, 5 - Rogue Konoko, 6 - ?, 7 - unagressive Cyndicate
-
 	var killsperLevel = vars.KillsPerLevel as HashSet<byte>[];
 
 	if (current.IsLoaded){
 		for (var i = curentLevelIndex; i < killsperLevel.Length; i++)
-			if (killsperLevel[i].Any()) 
+			if (killsperLevel[i].Any())
 				killsperLevel[i].Clear();
-
-		if (curentLevelIndex == 13){
-			vars.lv13fix_MuroIndex = 0;
-			vars.lv13fix_GriffinIndex = 0;
-		}
+		
+		current.KillsCount = killsperLevel.Sum(x => x.Count());
+		return;
+	}
+	
+	if (curentLevelIndex == 11){
+		current.lv11fix_MuroIndex = 0;
+		current.lv11fix_GriffinIndex = 0;
 	}
 
-	var lv13fix_MuroIndex = 0;
-	var lv13fix_GriffinIndex = 0;
     for (var i = 0; i < oniCharsMaximumCount; i++)
     {
         var index = game.ReadValue<byte>(konokoPtr); // Chr list index, from 0 - konoko to max 128. May be gaps, the game could fill gaps.
         
 		if (index == 0 && firstChrMonitored){
+        	konokoPtr += oniCharsBlockSize	;
 			continue;
 		}
 
@@ -302,39 +303,35 @@ update
 			&&	hp == 0 
 			&& (fraction == 2  
 				|| (fraction == 1 || fraction == 4) && konokoFraction == 5
-				|| konokoFraction == 2 && curentLevelIndex == 0)) // training level fraction swap
+				|| konokoFraction == 2 && curentLevelIndex == 0)) // training level fraction swap 
 				{
+					print("kill " + objectId);
 					killsperLevel[curentLevelIndex].Add(objectId);
 				}		
-			
 		//Muro and Griffin fix. on DD game just delete them, leaves no record with 0 hp 
 		if (curentLevelIndex == 11){
-			if (name.StartsWith("IntroMuro"))  
+			if (name.Equals("IntroMuro"))  
 			{
-				vars.lv13fix_MuroIndex = index;			
-				lv13fix_MuroIndex = index;	
+				current.lv11fix_MuroIndex = index;		
 			}		
 
-			if (name.StartsWith("griffin"))
+			if (name.Equals("griffin"))
 			{
-				vars.lv13fix_GriffinIndex = index;
-				lv13fix_GriffinIndex = index;
+				current.lv11fix_GriffinIndex = index;
 			}
 		}
 		firstChrMonitored = true;
-        konokoPtr += oniCharsBlockSize;
+        konokoPtr += oniCharsBlockSize	;
     }
 
 	if (curentLevelIndex == 11){
-		if (vars.lv13fix_MuroIndex != 0 && lv13fix_MuroIndex == 0) killsperLevel[curentLevelIndex].Add(vars.lv13fix_MuroIndex);
-		if (vars.lv13fix_GriffinIndex != 0 && lv13fix_GriffinIndex == 0) killsperLevel[curentLevelIndex].Add(vars.lv13fix_GriffinIndex);
+		if (old.lv11fix_MuroIndex != 0 && current.lv11fix_MuroIndex == 0)
+			killsperLevel[curentLevelIndex].Add(old.lv11fix_MuroIndex);
+		if (old.lv11fix_GriffinIndex != 0 && current.lv11fix_GriffinIndex == 0)
+			killsperLevel[curentLevelIndex].Add(old.lv11fix_GriffinIndex);
 	}
 
-
-	/*for(var i = 0; i < killsperLevel.Length; i++)
-		if (killsperLevel[i].Any())
-			print(string.Format("{0}: {1}", i, string.Join(", ", killsperLevel[i])));*/
-	current.KillsCount = killsperLevel.Sum(x => x.Count()); 
+	current.KillsCount = killsperLevel.Sum(x => x.Count());
 }
 
 start
@@ -356,6 +353,10 @@ start
 onStart{
 	current.split = 0;
 	current.potentialLoadingBlindPoint = false;
+	var killsperLevel = vars.KillsPerLevel as HashSet<byte>[];
+	for (var i = 0; i < killsperLevel.Length; i++)
+			if (killsperLevel[i].Any())
+				killsperLevel[i].Clear();
 }
 
 reset
