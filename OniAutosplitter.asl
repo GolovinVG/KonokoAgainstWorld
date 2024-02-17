@@ -1,38 +1,38 @@
-// 10 october 2022
+// 02/17/2024
+// ver 1.0.0
 
 state("Oni", "EN")
 {
 	int levelId : 0x1ED2EC;
 	ulong anim : 0x1EB700; // check if it's training or not
 	string20 save_point : 0x1ECC10; // "    Save Point 1"
-	
-	bool endcheck : 0x1EC0C4; // check Muro kill
-	
+		
 	float coord_x : 0x1ECE7C, 0xB0, 0xC4;
 	float coord_y : 0x1ECE7C, 0xB0, 0xCC;
 	int konoko_hp : 0x236514, 0x38;
 	int konoko_shield : 0x230FE8;
 	int enemy_hp : 0x23a2a0, 0x38;
 	
-	int time : 0x2582C0;	
-	bool cutscene : 0x0014D64C;
-	int cutsceneSegment : 0x2364C4;
-	short igtPause : 0x1ECE7C, 0x1679AC;
+	int time : 0x2582C0; // ingame time, set 0 on manualy loading level. updates not so frequently, so ignored most times
+	bool cutscene : 0x14D64C;
 	int dialog : 0x236514, 0x04;
-	int level : 0x1ED398;
 	bool level5_endCutscene : 0x1ECE92;
 
-	long keysLocked: 0x1ECE7C, 0x1679B0; 
+	//variables below have obscure meaning, so i describe what I have searched with cheat engine
+	//I'm not so sure that I found out what it is, that why it often ensured by other conditions
+	short igtPause : 0x1ECE7C, 0x1679AC; // My guessing it's locking player mouse but I leave original name for heritage purposes
+	long keysLocked: 0x1ECE7C, 0x1679B0; // searched by console command lock_keys that often use in bsl scripts. Technicaly locked all and unlocked pause is state when game not playing
+	byte deathLogo : 0x13D878; // tried to catch death screen
+	byte startLogo : 0x15FD44; // tried to catch after loading logo
+	bool lockedPlayerActivity : 0x1EC0C4; // most likely this flag prevents player from do anything, including call a menu
+	bool pausedByPlayer: 0x1E96BC; // anu menu called including F1
 
-	//HAs potential
-	//byte chrActive : 0x1ECC54;
-	byte chrActive1 : 0x14D64C;
-	byte chrActive : 0x13D878; //catched by death screen
-	byte chrActive0 : 0x15FD44; //level loading by death screen
-	bool chrBusy : 0x1EC0C4; 
-	bool pausedByPlayer: 0x1E96BC;
+	//OBSOLETE
+	//int level : 0x1ED398; // conflicts with levelId and changed too late on loading process
+	//int cutsceneSegment : 0x2364C4; // not used
 }
 
+//TODO need redo mem refs
 state("Oni", "RU") 
 {
 	int levelId : 0x1E8C38;
@@ -160,7 +160,6 @@ startup {
 	vars.Core.FindLevel = (Func<byte, ExpandoObject>)((inGameIndex) => 
 			levels.First(x => inGameIndex == ((dynamic)x).InGameIndex) 
 		);
-
 }
  
 init
@@ -192,7 +191,13 @@ init
 	current.split = 0;
 	current.dbg_isLoading = 0;
 	current.dbg_update = 0;
-	current.potentialLoadingBlindPoint = false; // between levels there is point where no obvious markings available, so after loadings until we have any marking we have to pause
+
+// on load weird thing is happening
+// loading >>> levelId set to 0 >>> levelId set to smth
+// >>> no locks but no flags (may be some, but not obvious too shoort to capture with naked eye)
+// >>> cutscene locks >>> free to go
+// so we capture moment of levelId change to pause timet, and unlock when normal locks available or none if loading from numbered save point
+	current.potentialLoadingBlindPoint = false; 
 
 	var killsPerLevel =  new HashSet<byte>[15];
 	for (var i = 0; i< killsPerLevel.Length; i++ ) killsPerLevel[i] = new HashSet<byte>();
@@ -204,11 +209,14 @@ init
 		current.pausedByPlayer || current.time == 0
 	);
 	vars.Core.LevelIsLoading = (Func<bool>)(() =>
-		current.chrBusy || current.chrActive != 1|| current.chrActive0 != 1  || current.IsLoading);
+		current.lockedPlayerActivity || current.deathLogo != 1|| current.startLogo != 1  || current.IsLoading);
 	vars.Core.CutsceneIsPlaying = (Func<bool>)(() =>
-		current.igtPause == 0 || current.level5_endCutscene
-		);
-	vars.Core.PlayerHasNoControl = (Func<bool>)(() => 
+		current.level5_endCutscene
+	);
+	vars.Core.PlayerHasNoMouseControl = (Func<bool>)(() => 
+		current.igtPause == 0 
+	);
+	vars.Core.PlayerHasNoKeyboardControl = (Func<bool>)(() => 
 		current.keysLocked == 0x10007 // unlock pause only 
 		|| current.keysLocked == 0x10003 // lockall 
 	);
@@ -239,7 +247,6 @@ update
 	vars.Konoko_Speed = current.speed;
 	vars.Konoko_HP_Shield = current.konoko_hp.ToString() + "/" + current.konoko_shield.ToString();
 	vars.Enemy_HP = current.enemy_hp;
-	
 
 	var currentLevelInGameIndex = current.levelId == 1 && current.save_point == "" ? 0 : current.levelId;
 
@@ -252,7 +259,7 @@ update
 		|| (current.LevelIndex == 0 && current.save_point == "" &&
 			current.anim == 0xC3A90FA5C48C7D82)); 
 
-	if (current.IsLoaded && current.potentialLoadingBlindPoint == false)
+	if (current.IsLoaded && old.potentialLoadingBlindPoint == false)
 		current.potentialLoadingBlindPoint = true; 
 
 	/// Kills Counting Block  
@@ -304,26 +311,23 @@ update
 			&& (fraction == 2  
 				|| (fraction == 1 || fraction == 4) && konokoFraction == 5
 				|| konokoFraction == 2 && curentLevelIndex == 0)) // training level fraction swap 
-				{
-					print("kill " + objectId);
 					killsperLevel[curentLevelIndex].Add(objectId);
-				}		
-		//Muro and Griffin fix. on DD game just delete them, leaves no record with 0 hp 
+
+		//Muro and Griffin fix. on DD lvl the game just delete them, leaves no record with 0 hp 
 		if (curentLevelIndex == 11){
 			if (name.Equals("IntroMuro"))  
-			{
 				current.lv11fix_MuroIndex = index;		
-			}		
 
 			if (name.Equals("griffin"))
-			{
 				current.lv11fix_GriffinIndex = index;
-			}
 		}
 		firstChrMonitored = true;
         konokoPtr += oniCharsBlockSize	;
     }
 
+	// on previous update chr was detected but now it is none
+	// it's possible to have some issue with muro as it may survive till level ends, 
+	// but killing him with ghost makes more potential kills later, he will drawn in acid any way
 	if (curentLevelIndex == 11){
 		if (old.lv11fix_MuroIndex != 0 && current.lv11fix_MuroIndex == 0)
 			killsperLevel[curentLevelIndex].Add(old.lv11fix_MuroIndex);
@@ -390,7 +394,6 @@ split
 }
 
 isLoading {
-
 	var  currentLevelInGameIndex = vars.Core.GetIngameLevelId(); 
 
     dynamic currentLevel = vars.Core.FindLevel((byte)currentLevelInGameIndex);
@@ -398,20 +401,22 @@ isLoading {
 		if (vars.Core.TrainingLevel.HelloKonoko()
 			|| vars.Core.LevelIsLoading()
 			|| vars.Core.CutsceneIsPlaying()
+			|| vars.Core.PlayerHasNoMouseControl()
 			|| vars.Core.UnscippableDialogue())
 			return true;
 		current.potentialLoadingBlindPoint = false;
 		return false; 
 	} 
-	if (vars.Core.CutsceneIsPlaying()		
+	if (vars.Core.CutsceneIsPlaying()
+		
+		|| vars.Core.PlayerHasNoMouseControl()
+		|| vars.Core.PlayerHasNoKeyboardControl()	
 		|| vars.Core.UnscippableDialogue()){ 
 			current.potentialLoadingBlindPoint = false;
-			return true ;	
+			return true;	
 		}
 	// Unconditional pause
-	if (vars.Core.GamePaused()
-		|| vars.Core.PlayerHasNoControl()
-		|| vars.Core.LevelIsLoading())
+	if (vars.Core.LevelIsLoading()|| vars.Core.GamePaused())
 		return true;
 	
 	if (current.save_point != "" && current.save_point != "Syndicate Warehouse")
