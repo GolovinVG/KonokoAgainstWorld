@@ -104,6 +104,7 @@ startup {
 	vars.Core.Modules = new List<ExpandoObject>();
 	vars.Core.NeedStart = false;
 	vars.Core.NeedReset = false; 
+	vars.Core.LevelProgress = -1; // index of where plauer plaed last continiously
 }
  
 init
@@ -131,7 +132,7 @@ init
 	current.IsLoading = false;
 	current.IsLoaded = false;
 	current.KillsCount = 0;
-	current.LevelIndex = -1;
+	current.LevelIndex = 0;
 
 // on load weird thing is happening
 // loading >>> levelId set to 0 >>> levelId set to smth
@@ -159,7 +160,18 @@ init
 			core.NeedStart = c.LevelIndex == 0 
 				&& c.anim == 0xC3A90FA5C48C7D82 
 				&& o.anim != 0xC3A90FA5C48C7D82;
+
+			IntPtr konokoPtr = vars.konokoPtr;
+			var coord_xpow = (float)Math.Pow(c.coord_x, 2);
+			var coord_ypow = (float)Math.Pow(c.coord_y, 2);
+				
+			c.speed = Math.Round((Decimal)(float)Math.Sqrt(coord_xpow + coord_ypow), 2, MidpointRounding.AwayFromZero);
+			c.speed = (int)(c.speed * 100);
+			c.Konoko_Speed = c.speed;
+			c.Konoko_HP_Shield = c.konoko_hp.ToString() + "/" + c.konoko_shield.ToString();
+			c.Enemy_HP = c.enemy_hp;
 		});
+
 	});
 
 #region KillsCountModule
@@ -290,23 +302,12 @@ init
 		vars.Core.Update = (Action<ExpandoObject, ExpandoObject>)((_c, _o) => {
 			dynamic c = _c;
 			dynamic o = _o;
-			
 			IntPtr konokoPtr = vars.konokoPtr;
-			var coord_xpow = (float)Math.Pow(c.coord_x, 2);
-			var coord_ypow = (float)Math.Pow(c.coord_y, 2);
-				
-			c.speed = Math.Round((Decimal)(float)Math.Sqrt(coord_xpow + coord_ypow), 2, MidpointRounding.AwayFromZero);
-			c.speed = (int)(c.speed * 100);
-			c.Konoko_Speed = c.speed;
-			c.Konoko_HP_Shield = c.konoko_hp.ToString() + "/" + c.konoko_shield.ToString();
-			c.Enemy_HP = c.enemy_hp;
-
 			if (c.levelId == 0){
 				// first load or id lag 
 			}else{
 				var cLevelInGameIndex = core.GetIngameLevelId();
 				dynamic cLevel = core.FindLevel((byte)cLevelInGameIndex);
-				core.cLevel = cLevel;		
 				c.LevelIndex = cLevel.Index;
 			}
 		 
@@ -318,14 +319,13 @@ init
 				core.onLevelLoad(); 
  
 			if (c.IsLoaded && o.potentialLoadingBlindPoint == false)
-				c.potentialLoadingBlindPoint = true; 
+				c.potentialLoadingBlindPoint = true;  
 			
-			if (o.LevelIndex != c.LevelIndex
-				&& o.LevelIndex + 1 == c.LevelIndex
-				//&& (c.save_point == "" || c.save_point == "Syndicate Warehouse") 
+			if (c.LevelIndex - 1 == core.LevelProgress
 				|| c.LevelIndex == 14 
 				&& c.save_point.Contains("4") 
-				&& c.endcheck == true){
+				&& c.endcheck == true){ 
+					core.LevelProgress = c.LevelIndex;
 					if (core.onLevelProgress != null)
 						core.onLevelProgress();
 				}
@@ -336,9 +336,9 @@ init
 
 		vars.Core.SetStart = (Action) (() => {
 			current.potentialLoadingBlindPoint = false;
-			
+			core.LevelProgress = 0;
 			if (core.onTimerStarted != null)
-				core.onTimerStarted();
+				core.onTimerStarted(); 
 		});
 
 		vars.Core.GamePaused = (Func<bool>)(() =>
@@ -412,6 +412,7 @@ split
 	if (vars.Core.RaiseSplit)
 	{		
 		vars.Core.RaiseSplit = false;
+		print("SPLIT" + vars.Core.LevelProgress); 
 		return true;
 	}
 }
