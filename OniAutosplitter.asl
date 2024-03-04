@@ -98,7 +98,7 @@ startup {
 
 	vars.Core.onLevelLoad = (Action)(() => {});
 	vars.Core.onLevelProgress = (Action)(() => {});
-	vars.Core.onUpdate = (Action)(() => {});
+	vars.Core.onUpdate = (Action<ExpandoObject, ExpandoObject>)((_c,_o) => {});
 	vars.Core.onTimerStarted = (Action)(() => {});
 
 	vars.Core.Modules = new List<ExpandoObject>();
@@ -142,6 +142,26 @@ init
 	
 	var core = vars.Core;
 
+	dynamic mainModule = new ExpandoObject();
+	core.Modules.Add(mainModule);
+	mainModule.Init = (Action)(() => {
+		core.onLevelProgress += (Action)(() => {
+			core.RaiseSplit = true;
+		});
+		core.onUpdate += (Action<ExpandoObject, ExpandoObject>)((_c, _o) => {
+			dynamic c = _c;
+			dynamic o = _o;
+			
+			core.NeedReset = c.LevelIndex == 0 
+				&& c.anim == 0xC3A90FA5C48C7D82 
+				&& o.anim != 0xC3A90FA5C48C7D82;
+
+			core.NeedStart = c.LevelIndex == 0 
+				&& c.anim == 0xC3A90FA5C48C7D82 
+				&& o.anim != 0xC3A90FA5C48C7D82;
+		});
+	});
+
 #region KillsCountModule
 	if (settings["EnableKillsCount"]){
 		dynamic killModule = new ExpandoObject();
@@ -160,7 +180,7 @@ init
 					killsperLevel[i].Clear();
 			});
 
-			core.onUpdate += (Action)(() => {
+			core.onUpdate += (Action<ExpandoObject, ExpandoObject>)((_c,_o) => {
 				IntPtr konokoPtr = vars.konokoPtr;
 				var firstChrMonitored = false;
 				var oniCharsMaximumCount = 128;
@@ -297,14 +317,6 @@ init
 			if (c.IsLoaded && core.onLevelLoad != null)
 				core.onLevelLoad(); 
  
-			core.NeedReset = c.LevelIndex == 0 
-				&& c.anim == 0xC3A90FA5C48C7D82 
-				&& o.anim != 0xC3A90FA5C48C7D82;
-
-			core.NeedStart = c.LevelIndex == 0 
-				&& c.anim == 0xC3A90FA5C48C7D82 
-				&& o.anim != 0xC3A90FA5C48C7D82;
-
 			if (c.IsLoaded && o.potentialLoadingBlindPoint == false)
 				c.potentialLoadingBlindPoint = true; 
 			
@@ -314,14 +326,12 @@ init
 				|| c.LevelIndex == 14 
 				&& c.save_point.Contains("4") 
 				&& c.endcheck == true){
-						core.RaiseSplit = true;
-
 					if (core.onLevelProgress != null)
 						core.onLevelProgress();
 				}
 
 			if (core.onUpdate != null) 
-				core.onUpdate();
+				core.onUpdate(c, o);
 		});
 
 		vars.Core.SetStart = (Action) (() => {
