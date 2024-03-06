@@ -100,16 +100,20 @@ startup {
 	vars.Core.onLevelProgress = (Action)(() => {});
 	vars.Core.onUpdate = (Action)(() => {});
 	vars.Core.onTimerStarted = (Action)(() => {});
+	vars.Core.onBeforeCycleEnd = (Action)(() => {}); // last chance to override standard behaviour
 
 	vars.Core.Modules = new List<ExpandoObject>();
 	vars.Core.NeedStart = false;
 	vars.Core.NeedReset = false; 
-	vars.Core.LevelProgress = -1; // index of where plauer plaed last continiously
+	vars.Core.LevelProgress = 0; // index of where plauer plaed last continiously
 	vars.Core.ActivatedModules = new List<string>(); 
+	vars.Core.SwithcLevel = false;
+	vars.Core.TimerPaused = true;
 }
  
 init
 {	
+	current.TimerPaused = true; 
 	game.Exited += (s, e) => timer.IsGameTimePaused = true;
 	current.Konoko_Speed = 0;
 	current.Konoko_HP_Shield = "0/0";
@@ -141,6 +145,7 @@ init
 // >>> cutscene locks >>> free to go
 // so we capture moment of levelId change to pause timet, and unlock when normal locks available or none if loading from numbered save point
 	current.potentialLoadingBlindPoint = false; 
+	current.potentialLoadingBlindPointSwitch = false; 
 	
 	var core = vars.Core;
 
@@ -152,14 +157,14 @@ init
 			core.RaiseSplit = true;
 		});
 		core.onUpdate += (Action)(() => {
-			if (core.NeedReset) print("1");
-			core.NeedReset = core.Current.LevelIndex == 0 
+			
+			if (core.Current.LevelIndex == 0 
 				&& core.Current.anim == 0xC3A90FA5C48C7D82 
-				&& core.Old.anim != 0xC3A90FA5C48C7D82;
-
-			core.NeedStart = core.Current.LevelIndex == 0 
-				&& core.Current.anim == 0xC3A90FA5C48C7D82 
-				&& core.Old.anim != 0xC3A90FA5C48C7D82;
+				&& core.Old.anim != 0xC3A90FA5C48C7D82){
+				core.NeedReset = true;
+				core.NeedStart = true;
+				core.LevelProgress = 0;
+			}
 
 			IntPtr konokoPtr = vars.konokoPtr;
 			var coord_xpow = (float)Math.Pow(core.Current.coord_x, 2);
@@ -282,25 +287,63 @@ init
 	dynamic perLevelModule = new ExpandoObject();
 	core.Modules.Add(perLevelModule); 
 	perLevelModule.EnableTriggerName = "TimerPerLevel_Module";
-	perLevelModule.OnLevelProgressHandle = (Action)(() =>{
-		vars.TimerModel.Pause(); 
-		core.RaiseSplit = false;
+	perLevelModule.OnLevelProgressHandle = (Action)(() =>{ 
+		perLevelModule.LockTimer = true;	
 	});
 	perLevelModule.OnStartHandle = (Action)(() =>{
-		for (var i = 0; i < core.Current.LevelIndex; i++)
+		for (var i = 0; i < perLevelModule.CurrentRunningLevel; i++)
 			vars.TimerModel.SkipSplit();
 	});
 	perLevelModule.OnLevelLoadHandle = (Action)(() =>{
-		if (core.Old.LevelIndex == core.Current.LevelIndex){
-			core.NeedReset = true;
-			core.NeedStart = true;
+		if (perLevelModule.CurrentRunningLevel == -1
+			|| perLevelModule.CurrentRunningLevel == core.Current.LevelIndex
+			|| core.Old.LevelIndex == core.Current.LevelIndex){
+			if (core.Current.save_point == "" || core.Current.save_point == "Syndicate Warehouse")
+			{
+				vars.TimerModel.Reset();
+				core.NeedStart = true;
+				perLevelModule.LockTimer = false;
+				perLevelModule.FreezeTimer = true;
+				perLevelModule.CurrentRunningLevel = core.Current.LevelIndex;
+				perLevelModule.Pause = false;
+			}
 		}
+		else
+		if (perLevelModule.CurrentRunningLevel != core.Current.LevelIndex) 
+		{
+			if (perLevelModule.Pause == false){
+				vars.TimerModel.Split(); 
+				vars.TimerModel.Pause(); 
+				perLevelModule.LockTimer = true;		
+				perLevelModule.Pause = true;	
+			}				
+		}	
 	});
-
+	perLevelModule.OnUpdateHandle = (Action)(() => {
+		perLevelModule.LockTimer = false;
+		perLevelModule.FreezeTimer &= core.Current.potentialLoadingBlindPoint; 
+	});
+	perLevelModule.OnBeforeCycleEndHandle = (Action)(() => {
+		if (perLevelModule.LockTimer){
+			core.RaiseSplit = false; // prevent default  
+			core.NeedReset = false;
+			core.NeedStart = false;
+		}
+		
+		core.FreezeTime = perLevelModule.FreezeTimer;
+		
+	});
 	perLevelModule.Init = (Action)(() => {
 		core.onLevelProgress += perLevelModule.OnLevelProgressHandle;
 		core.onTimerStarted += perLevelModule.OnStartHandle;
 		core.onLevelLoad += perLevelModule.OnLevelLoadHandle;
+		core.onUpdate += perLevelModule.OnUpdateHandle;
+		core.onBeforeCycleEnd += perLevelModule.OnBeforeCycleEndHandle;
+		core.LevelProgress = 0;
+		perLevelModule.LockTimer = true;
+		perLevelModule.FreezeTimer = true;
+		perLevelModule.Pause = true;
+		perLevelModule.CurrentRunningLevel = -1;
 		vars.TimerModel.Reset();
 		print(perLevelModule.EnableTriggerName + " Activated");
 	});
@@ -308,6 +351,9 @@ init
 		core.onLevelProgress -= perLevelModule.OnLevelProgressHandle;
 		core.onTimerStarted -= perLevelModule.OnStartHandle;
 		core.onLevelLoad -= perLevelModule.OnLevelLoadHandle;
+		core.onUpdate -= perLevelModule.OnUpdateHandle;
+		core.onBeforeCycleEnd -= perLevelModule.OnBeforeCycleEndHandle;
+		core.LevelProgress = 0;
 		vars.TimerModel.Reset();
 		print(perLevelModule.EnableTriggerName + " Deactivated");
 	});
@@ -315,6 +361,21 @@ init
 #endregion
 
 #region Core 
+		vars.Core.CheckPause = (Func<bool>)(() => {
+			if (core.Current.LevelIndex == 0)
+				return core.TrainingLevel.HelloKonoko() || core.Current.potentialLoadingBlindPoint;
+
+			if (core.CutsceneIsPlaying()
+				|| core.PlayerHasNoMouseControl()
+				|| core.PlayerHasNoKeyboardControl()	
+				|| core.UnscippableDialogue()
+				|| core.GamePaused()
+				|| core.GameShowsUnplayebleStuff()
+				|| core.Current.potentialLoadingBlindPoint){
+					return true;
+				} 
+			return false;
+		});
 		vars.Core.CheckModules = (Action)(() => {
 			foreach (var module in core.Modules)
 			{
@@ -336,7 +397,6 @@ init
 		vars.Core.Update = (Action<ExpandoObject, ExpandoObject>)((_c, _o) => {
 			core.CheckModules();
 
-
 			core.Old = _o;
 			core.Current = _c;
 
@@ -345,41 +405,64 @@ init
 
 			IntPtr konokoPtr = vars.konokoPtr;
 			if (core.Current.levelId == 0){
-				// first load or id lag 
+				vars.Core.SwithcLevel = true;
+				core.Current.potentialLoadingBlindPoint = true;  
+				core.Current.potentialLoadingBlindPointSwitch = false;  
 			}else{
 				var cLevelInGameIndex = core.GetIngameLevelId();
 				dynamic cLevel = core.FindLevel((byte)cLevelInGameIndex);
 				core.Current.LevelIndex = cLevel.Index;
 			}
-		 
-			core.Current.IsLoading = game.ReadValue<byte>(konokoPtr + 0x14) == 0; // Konoko briefly lose her name on level loading
-			core.Current.IsLoaded = core.Old.IsLoaded == false 
-				&& core.Current.IsLoading == false && core.Old.IsLoading == true; 
+			var detectedKonoko = game.ReadValue<byte>(konokoPtr + 0x14) != 0; // Konoko briefly lose her name on level loading  
+			core.Current.IsLoading |= !detectedKonoko;
 
-			if (core.Current.IsLoaded && core.onLevelLoad != null)
-			{
-				print("on level load");
-				core.onLevelLoad(); 
-					
-			}
- 
-			if (core.Current.IsLoaded && core.Old.potentialLoadingBlindPoint == false)
-				core.Current.potentialLoadingBlindPoint = true;  
 			
-			if (core.Current.LevelIndex - 1 == core.LevelProgress
+			core.Current.potentialLoadingBlindPointSwitch |= core.PlayerHasNoMouseControl();
+			core.Current.potentialLoadingBlindPoint &= 
+				!(core.Current.save_point == ""|| core.Current.save_point == "Syndicate Warehouse") 
+				|| !core.Current.potentialLoadingBlindPointSwitch; 
+
+
+			core.Current.IsLoaded = core.Current.levelId != 0 // level obtain index 
+			 	&& vars.Core.SwithcLevel // recently index was 0
+				&& core.Old.IsLoaded == false // prevent multiple 
+				&& core.Current.IsLoading // konoko 0 info detected
+				&& detectedKonoko; // but now it has value
+
+			if (core.Current.IsLoaded){
+				print("on level load");
+				core.Current.IsLoading = false;
+				vars.Core.SwithcLevel = false;
+				if(core.onLevelLoad != null)
+				{
+					core.onLevelLoad(); 						
+				}
+			}	
+ 
+			if (core.Current.LevelIndex - 1 == core.LevelProgress && 
+				(core.Current.save_point == "" || core.Current.save_point == "Syndicate Warehouse")
 				|| core.Current.LevelIndex == 14 
 				&& core.Current.save_point.Contains("4") 
 				&& core.Current.endcheck == true){ 
 					core.LevelProgress = core.Current.LevelIndex;
 					if (core.onLevelProgress != null)
-						core.onLevelProgress();
+						{
+							print("on level progress " + core.LevelProgress);
+							core.onLevelProgress();
+						}
 				}
 
+			core.TimerPaused = core.CheckPause();
+
+			if (vars.Core.TrainingLevel.HelloKonoko())
+				core.FreezeTime = true;
+
+			if (core.onBeforeCycleEnd != null)
+				core.onBeforeCycleEnd();
 		});
 
 		vars.Core.SetStart = (Action) (() => {
-			current.potentialLoadingBlindPoint = false;
-			core.LevelProgress = 0;
+			current.potentialLoadingBlindPoint = true;
 			if (core.onTimerStarted != null)
 				core.onTimerStarted(); 
 		});
@@ -387,7 +470,7 @@ init
 		vars.Core.GamePaused = (Func<bool>)(() =>
 			current.pausedByPlayer || current.time == 0
 		);
-		vars.Core.LevelIsLoading = (Func<bool>)(() =>
+		vars.Core.GameShowsUnplayebleStuff = (Func<bool>)(() =>
 			current.lockedPlayerActivity || current.deathLogo != 1 || current.startLogo != 1  || current.IsLoading);
 		vars.Core.CutsceneIsPlaying = (Func<bool>)(() =>
 			current.level5_endCutscene
@@ -457,40 +540,11 @@ split
 }
 
 isLoading {
-	var  currentLevelInGameIndex = vars.Core.GetIngameLevelId(); 
-
-    dynamic currentLevel = vars.Core.FindLevel((byte)currentLevelInGameIndex);
-	if (currentLevel.Index == 0){
-		if (vars.Core.TrainingLevel.HelloKonoko()
-			|| vars.Core.LevelIsLoading()
-			|| vars.Core.CutsceneIsPlaying()
-			|| vars.Core.PlayerHasNoMouseControl()
-			|| vars.Core.UnscippableDialogue())
-			return true;
-		current.potentialLoadingBlindPoint = false;
-		return false; 
-	} 
-	if (vars.Core.CutsceneIsPlaying()
-		
-		|| vars.Core.PlayerHasNoMouseControl()
-		|| vars.Core.PlayerHasNoKeyboardControl()	
-		|| vars.Core.UnscippableDialogue()){ 
-			current.potentialLoadingBlindPoint = false;
-			return true;	
-		}
-	// Unconditional pause
-	if (vars.Core.LevelIsLoading()|| vars.Core.GamePaused())
-		return true;
-	
-	if (current.save_point != "" && current.save_point != "Syndicate Warehouse")
-		current.potentialLoadingBlindPoint = false;
-
-	return current.potentialLoadingBlindPoint ;
-
+	current.TimerPaused = vars.Core.TimerPaused;
+	return vars.Core.TimerPaused;
 } 
 
 gameTime{
-	if (current.LevelIndex == 0) 
-		if (vars.Core.TrainingLevel.HelloKonoko())
-			return TimeSpan.Zero; 
+	if (vars.Core.FreezeTime)
+		return TimeSpan.Zero; 
 }
