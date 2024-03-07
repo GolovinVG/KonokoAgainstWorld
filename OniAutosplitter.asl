@@ -12,7 +12,7 @@ state("Oni", "EN")
 	int konoko_hp : 0x236514, 0x38;
 	int konoko_shield : 0x230FE8;
 	int enemy_hp : 0x23a2a0, 0x38;
-	
+	bool endcheck : 0x1EC0C4; // check Muro kill
 	int time : 0x2582C0; // ingame time, set 0 on manualy loading level. updates not so frequently, so ignored most times
 	bool cutscene : 0x14D64C;
 	int dialog : 0x236514, 0x04;
@@ -98,6 +98,7 @@ startup {
 
 	vars.Core.onLevelLoad = (Action)(() => {});
 	vars.Core.onLevelProgress = (Action)(() => {});
+	vars.Core.onEnd = (Action)(() => {});
 	vars.Core.onUpdate = (Action)(() => {});
 	vars.Core.onTimerStarted = (Action)(() => {});
 	vars.Core.onBeforeCycleEnd = (Action)(() => {}); // last chance to override standard behaviour
@@ -107,8 +108,9 @@ startup {
 	vars.Core.NeedReset = false; 
 	vars.Core.LevelProgress = 0; // index of where plauer plaed last continiously
 	vars.Core.ActivatedModules = new List<string>(); 
-	vars.Core.SwithcLevel = false;
+	vars.Core.SwitchLevel = false;
 	vars.Core.TimerPaused = true;
+	vars.Core.MuroKilled = false;
 }
  
 init
@@ -154,6 +156,9 @@ init
 	mainModule.EnableTriggerName = "Main";
 	mainModule.Init = (Action)(() => {
 		core.onLevelProgress += (Action)(() => {
+			core.RaiseSplit = true;
+		});
+		core.onEnd += (Action)(() => {
 			core.RaiseSplit = true;
 		});
 		core.onUpdate += (Action)(() => {
@@ -290,6 +295,10 @@ init
 	perLevelModule.OnLevelProgressHandle = (Action)(() =>{ 
 		perLevelModule.LockTimer = true;	
 	});
+	perLevelModule.OnEndHandle = (Action)(() =>{ 
+		vars.TimerModel.Pause(); 
+		perLevelModule.LockTimer = true;	
+	});
 	perLevelModule.OnStartHandle = (Action)(() =>{
 		for (var i = 0; i < perLevelModule.CurrentRunningLevel; i++)
 			vars.TimerModel.SkipSplit();
@@ -301,36 +310,36 @@ init
 			if (core.Current.save_point == "" || core.Current.save_point == "Syndicate Warehouse")
 			{
 				vars.TimerModel.Reset();
-				core.NeedStart = true;
-				perLevelModule.LockTimer = false;
-				perLevelModule.FreezeTimer = true;
+				perLevelModule.PreventDefaultTimerBehavior = true;
+				perLevelModule.TimerHasToBeZero = true;
 				perLevelModule.CurrentRunningLevel = core.Current.LevelIndex;
-				perLevelModule.Pause = false;
+				perLevelModule.LoadedLevelIsNotForRun = false; 
+				vars.TimerModel.Start();
 			}
 		}
 		else
 		if (perLevelModule.CurrentRunningLevel != core.Current.LevelIndex) 
 		{
-			if (perLevelModule.Pause == false){
+			if (perLevelModule.LoadedLevelIsNotForRun == false){
 				vars.TimerModel.Split(); 
 				vars.TimerModel.Pause(); 
-				perLevelModule.LockTimer = true;		
-				perLevelModule.Pause = true;	
+				perLevelModule.PreventDefaultTimerBehavior = true;		
+				perLevelModule.LoadedLevelIsNotForRun = true;	
 			}				
 		}	
 	});
 	perLevelModule.OnUpdateHandle = (Action)(() => {
-		perLevelModule.LockTimer = false;
-		perLevelModule.FreezeTimer &= core.Current.potentialLoadingBlindPoint; 
+		perLevelModule.PreventDefaultTimerBehavior = false;
+		perLevelModule.TimerHasToBeZero &= core.Current.potentialLoadingBlindPoint; 
 	});
 	perLevelModule.OnBeforeCycleEndHandle = (Action)(() => {
-		if (perLevelModule.LockTimer){
-			core.RaiseSplit = false; // prevent default  
+		if (perLevelModule.PreventDefaultTimerBehavior){
+			core.RaiseSplit = false;
 			core.NeedReset = false;
 			core.NeedStart = false;
 		}
 		
-		core.FreezeTime = perLevelModule.FreezeTimer;
+		core.FreezeTime = perLevelModule.TimerHasToBeZero;
 		
 	});
 	perLevelModule.Init = (Action)(() => {
@@ -338,11 +347,12 @@ init
 		core.onTimerStarted += perLevelModule.OnStartHandle;
 		core.onLevelLoad += perLevelModule.OnLevelLoadHandle;
 		core.onUpdate += perLevelModule.OnUpdateHandle;
+		core.onEnd += perLevelModule.OnEndHandle;
 		core.onBeforeCycleEnd += perLevelModule.OnBeforeCycleEndHandle;
 		core.LevelProgress = 0;
-		perLevelModule.LockTimer = true;
-		perLevelModule.FreezeTimer = true;
-		perLevelModule.Pause = true;
+		perLevelModule.PreventDefaultTimerBehavior = true;
+		perLevelModule.TimerHasToBeZero = true;
+		perLevelModule.LoadedLevelIsNotForRun = true; // only repeatedly loading same level cause timer to start
 		perLevelModule.CurrentRunningLevel = -1;
 		vars.TimerModel.Reset();
 		print(perLevelModule.EnableTriggerName + " Activated");
@@ -352,6 +362,7 @@ init
 		core.onTimerStarted -= perLevelModule.OnStartHandle;
 		core.onLevelLoad -= perLevelModule.OnLevelLoadHandle;
 		core.onUpdate -= perLevelModule.OnUpdateHandle;
+		core.onEnd -= perLevelModule.OnEndHandle;
 		core.onBeforeCycleEnd -= perLevelModule.OnBeforeCycleEndHandle;
 		core.LevelProgress = 0;
 		vars.TimerModel.Reset();
@@ -363,19 +374,22 @@ init
 #region Core 
 		vars.Core.CheckPause = (Func<bool>)(() => {
 			if (core.Current.LevelIndex == 0)
-				return core.TrainingLevel.HelloKonoko() || core.Current.potentialLoadingBlindPoint;
+				return core.TrainingLevel.HelloKonoko() 
+					|| vars.Core.GameShowsUnplayebleStuff()
+					|| vars.Core.CutsceneIsPlaying()
+					|| vars.Core.PlayerHasNoMouseControl()
+					|| vars.Core.UnscippableDialogue()
+					|| core.Current.potentialLoadingBlindPoint;
 
-			if (core.CutsceneIsPlaying()
+			
+			return core.CutsceneIsPlaying()
 				|| core.PlayerHasNoMouseControl()
 				|| core.PlayerHasNoKeyboardControl()	
-				|| core.UnscippableDialogue()
+				|| core.UnscippableDialogue() 
 				|| core.GamePaused()
 				|| core.GameShowsUnplayebleStuff()
-				|| core.Current.potentialLoadingBlindPoint){
-					return true;
-				} 
-			return false;
-		});
+				|| core.Current.potentialLoadingBlindPoint;
+		}); 
 		vars.Core.CheckModules = (Action)(() => {
 			foreach (var module in core.Modules)
 			{
@@ -405,7 +419,7 @@ init
 
 			IntPtr konokoPtr = vars.konokoPtr;
 			if (core.Current.levelId == 0){
-				vars.Core.SwithcLevel = true;
+				vars.Core.SwitchLevel = true;
 				core.Current.potentialLoadingBlindPoint = true;  
 				core.Current.potentialLoadingBlindPointSwitch = false;  
 			}else{
@@ -424,33 +438,41 @@ init
 
 
 			core.Current.IsLoaded = core.Current.levelId != 0 // level obtain index 
-			 	&& vars.Core.SwithcLevel // recently index was 0
-				&& core.Old.IsLoaded == false // prevent multiple 
+			 	&& vars.Core.SwitchLevel // recently index was 0 
 				&& core.Current.IsLoading // konoko 0 info detected
 				&& detectedKonoko; // but now it has value
 
 			if (core.Current.IsLoaded){
 				print("on level load");
 				core.Current.IsLoading = false;
-				vars.Core.SwithcLevel = false;
+				vars.Core.SwitchLevel = false;
 				if(core.onLevelLoad != null)
 				{
 					core.onLevelLoad(); 						
 				}
 			}	
+
  
 			if (core.Current.LevelIndex - 1 == core.LevelProgress && 
-				(core.Current.save_point == "" || core.Current.save_point == "Syndicate Warehouse")
-				|| core.Current.LevelIndex == 14 
-				&& core.Current.save_point.Contains("4") 
-				&& core.Current.endcheck == true){ 
+				(core.Current.save_point == "" || core.Current.save_point == "Syndicate Warehouse")){ 
 					core.LevelProgress = core.Current.LevelIndex;
-					if (core.onLevelProgress != null)
-						{
-							print("on level progress " + core.LevelProgress);
-							core.onLevelProgress();
-						}
+					if (core.onLevelProgress != null){
+						print("on level progress " + core.LevelProgress);
+						core.onLevelProgress();
+					}
 				}
+
+			var muroKilledOld = core.MuroKilled;
+			core.MuroKilled |= core.Current.LevelIndex == 14 
+				&& core.Current.save_point.Contains("4") 
+				&& core.Current.endcheck == true;
+			if (muroKilledOld != core.MuroKilled){
+				core.LevelProgress = 0;
+				if (core.onEnd != null){
+					print("RIP MURO");
+					core.onEnd();
+				}
+			}
 
 			core.TimerPaused = core.CheckPause();
 
@@ -463,6 +485,7 @@ init
 
 		vars.Core.SetStart = (Action) (() => {
 			current.potentialLoadingBlindPoint = true;
+			core.MuroKilled = false;
 			if (core.onTimerStarted != null)
 				core.onTimerStarted(); 
 		});
