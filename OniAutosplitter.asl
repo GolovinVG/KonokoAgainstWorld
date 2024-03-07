@@ -99,9 +99,10 @@ startup {
 	vars.Core.onLevelLoad = (Action)(() => {});
 	vars.Core.onLevelProgress = (Action)(() => {});
 	vars.Core.onEnd = (Action)(() => {});
-	vars.Core.onUpdate = (Action)(() => {});
+	vars.Core.onUpdateBegins = (Action)(() => {});
 	vars.Core.onTimerStarted = (Action)(() => {});
-	vars.Core.onBeforeCycleEnd = (Action)(() => {}); // last chance to override standard behaviour
+	vars.Core.onUpdateEnds = (Action)(() => {}); // last chance to override standard behaviour
+	vars.Core.onAiDetected = (Action<ExpandoObject>)((x) => {}); 
 
 	vars.Core.Modules = new List<ExpandoObject>();
 	vars.Core.NeedStart = false;
@@ -139,6 +140,7 @@ init
 	current.IsLoading = false;
 	current.IsLoaded = false;
 	current.KillsCount = 0;
+	vars.KillsCount = 0;
 	current.LevelIndex = 0;
 
 // on load weird thing is happening
@@ -161,7 +163,7 @@ init
 		core.onEnd += (Action)(() => {
 			core.RaiseSplit = true;
 		});
-		core.onUpdate += (Action)(() => {
+		core.onUpdateBegins += (Action)(() => {
 			
 			if (core.Current.LevelIndex == 0 
 				&& core.Current.anim == 0xC3A90FA5C48C7D82 
@@ -189,100 +191,112 @@ init
 	core.Modules.Add(killModule);
 	killModule.EnableTriggerName = "KillsCount_Module";
 	killModule.OnStartHandle = (Action)(() => {
-			var killsperLevel = vars.KillsPerLevel as HashSet<byte>[];
-			for (var i = 0; i < killsperLevel.Length; i++)
+		var killsperLevel = killModule.KillsPerLevel as HashSet<byte>[];
+		for (var i = 0; i < killsperLevel.Length; i++)
 			if (killsperLevel[i].Any())
 				killsperLevel[i].Clear();
+		current.KillsCount = 0; // sometimes clear lags 	
+		print("Clear Kills");
 		});
-	killModule.OnUpdateHandle = (Action)(() => {
-		IntPtr konokoPtr = vars.konokoPtr;
-		var firstChrMonitored = false;
-		var oniCharsMaximumCount = 128;
-		var oniCharsBlockSize = 0x16A0;
-		var konokoFraction = 0; // 0 - konoko, 1 - TCTF, 2 - Cynd, 3 - Civilian, 4 - guard, 5 - Rogue Konoko, 6 - ?, 7 - unagressive Cyndicate
-		var killsperLevel = vars.KillsPerLevel as HashSet<byte>[];
-
-		if (current.IsLoaded){
-			for (var i = current.LevelIndex; i < killsperLevel.Length; i++)
+	killModule.OnLevelLoadHandle = (Action)(() => {
+		var killsperLevel = killModule.KillsPerLevel as HashSet<byte>[];
+		for (var i = core.Current.LevelIndex; i < killsperLevel.Length; i++)
 				if (killsperLevel[i].Any())
 					killsperLevel[i].Clear();
-			
-			current.KillsCount = killsperLevel.Sum(x => x.Count());
-			
-		}
-		else {
 		
-			if (current.LevelIndex == 11){
-				current.lv11fix_MuroIndex = 0;
-				current.lv11fix_GriffinIndex = 0;
-			}
-
-			for (var i = 0; i < oniCharsMaximumCount; i++)
-			{
-				var index = game.ReadValue<byte>(konokoPtr); // Chr list index, from 0 - konoko to max 128. May be gaps, the game could fill gaps.
-				
-				if (index == 0 && firstChrMonitored){
-					konokoPtr += oniCharsBlockSize	;
-					continue;
-				}
-
-				var hp = game.ReadValue<int>(konokoPtr + 0x38); // HP, yep
-				var objectId = game.ReadValue<byte>(konokoPtr + 0x1); // Object ID, id qnique during 1 level session (till load/reload). It's not gurantee same id for same enemy
-				var activeState = game.ReadValue<byte>(konokoPtr + 0x1F0); // 0 - dead, 1 - ready to fight, 3 - inactive
-				var fraction = game.ReadValue<byte>(konokoPtr + 0x12); // see konoko fraction
-				var name = game.ReadString(konokoPtr + 0x14, 10); // I think 10 is enough
-
-				if (firstChrMonitored == false){
-					konokoFraction = fraction;
-				}
-				
-				if ((settings["EnableTrainingKillsCount"] || current.LevelIndex != 0)
-					&&	hp == 0 
-					&& (fraction == 2  
-						|| (fraction == 1 || fraction == 4) && konokoFraction == 5
-						|| konokoFraction == 2 && current.LevelIndex == 0)) // training level fraction swap 
-							killsperLevel[current.LevelIndex].Add(objectId);
-				//Muro and Griffin fix. on DD lvl the game just delete them, leaves no record with 0 hp 
-				if (current.LevelIndex == 11){
-					if (name.Equals("IntroMuro"))  
-						current.lv11fix_MuroIndex = index;		
-
-					if (name.Equals("griffin"))
-						current.lv11fix_GriffinIndex = index;
-				}
-				firstChrMonitored = true;
-				konokoPtr += oniCharsBlockSize	;
-			}
-
-			// on previous update chr was detected but now it is none
-			// it's possible to have some issue with muro as it may survive till level ends, 
-			// but killing him with ghost makes more potential kills later, he will drawn in acid any way
-			if (current.LevelIndex == 11){
-				if (core.Old.lv11fix_MuroIndex != 0 && current.lv11fix_MuroIndex == 0)
-					killsperLevel[current.LevelIndex].Add(core.Old.lv11fix_MuroIndex);
-				if (core.Old.lv11fix_GriffinIndex != 0 && current.lv11fix_GriffinIndex == 0)
-					killsperLevel[current.LevelIndex].Add(core.Old.lv11fix_GriffinIndex);
-			}
-
-			current.KillsCount = killsperLevel.Sum(x => x.Count());
+		if (core.Current.LevelIndex == 11){
+			killModule.lv11fix_MuroIndex = 0;
+			killModule.lv11fix_GriffinIndex = 0;
+			killModule.lv11fix_GriffinDetected = false;
+			killModule.lv11fix_MuroDetected = false;
 		}
+		current.KillsCount = killsperLevel.Sum(x => x.Count());
+		print("Clear Kills after level with index " + core.Current.LevelIndex);
 	});
+	killModule.OnUpdateBeginsHandle = (Action)(() => {
+		killModule.lv11fix_GriffinDetected = false;
+		killModule.lv11fix_MuroDetected = false;
+	});
+
+	killModule.OnAiDetectedHandle = (Action<ExpandoObject>)((_ai) =>{
+		var killsperLevel = killModule.KillsPerLevel as HashSet<byte>[];
+		dynamic ai = _ai; 
+
+		if (ai.Index == 0){
+			killModule.KonokoFraction = ai.Fraction; // 0 - konoko, 1 - TCTF, 2 - Cynd, 3 - Civilian, 4 - guard, 5 - Rogue Konoko, 6 - ?, 7 - unagressive Cyndicate 
+		}
+
+		if ((settings["EnableTrainingKillsCount"] || core.Current.LevelIndex != 0)
+			&&	ai.Hp == 0 
+			&& (ai.Fraction == 2  
+				|| (ai.Fraction == 1 || ai.Fraction == 4) && killModule.KonokoFraction == 5
+				|| killModule.KonokoFraction == 2 && core.Current.LevelIndex == 0)) // training level fraction swap 
+					killsperLevel[current.LevelIndex].Add(ai.ObjectId);
+		//Muro and Griffin fix. on DD lvl the game just delete them, leaves no record with 0 hp
+		if (core.Current.LevelIndex == 11){
+			if (ai.Name.Equals("IntroMuro")) {
+					killModule.lv11fix_MuroIndex = ai.Index;
+					killModule.lv11fix_MuroDetected = true;
+				}	
+
+			if (ai.Name.Equals("griffin")){
+				killModule.lv11fix_GriffinIndex = ai.Index;
+				killModule.lv11fix_GriffinDetected = true;
+			}
+				
+		}	
+	});
+	killModule.OnUpdateEndsHandle = (Action)(() =>{		
+		var killsperLevel = killModule.KillsPerLevel as HashSet<byte>[];
+		// on previous update chr was detected but now it is none
+		// it's possible to have some issue with muro as it may survive till level ends, 
+		// but killing him with ghost makes more potential kills later, he will drawn in acid any way
+		if (core.Current.LevelIndex == 11){
+			if (killModule.lv11fix_MuroDetected == false 
+				&& killModule.lv11fix_MuroIndex != 0
+				&& killsperLevel[core.Current.LevelIndex].Contains(killModule.lv11fix_MuroIndex) == false)
+				{
+					print("Muro killed by scripts ='(");
+					killsperLevel[core.Current.LevelIndex].Add(killModule.lv11fix_MuroIndex);
+				}
+			if (killModule.lv11fix_GriffinDetected == false 
+				&& killModule.lv11fix_GriffinIndex != 0
+				&& killsperLevel[core.Current.LevelIndex].Contains(killModule.lv11fix_GriffinIndex) == false)
+			{
+				print("Griffin killed by scripts ='("); 
+				killsperLevel[core.Current.LevelIndex].Add(killModule.lv11fix_GriffinIndex);
+			}
+		}
+
+		current.KillsCount = killsperLevel.Sum(x => x.Count());
+		vars.KillsCount = core.Current.KillsCount;
+	});
+
 	killModule.Init = (Action)(() => {
 		var killsPerLevel =  new HashSet<byte>[15];
 		for (var i = 0; i< killsPerLevel.Length; i++ ) killsPerLevel[i] = new HashSet<byte>();
-		vars.KillsPerLevel = killsPerLevel;
-		current.lv11fix_MuroIndex = 0;
-		current.lv11fix_GriffinIndex = 0;
+		killModule.KillsPerLevel = killsPerLevel;
+		killModule.lv11fix_MuroIndex = 0;
+		killModule.lv11fix_GriffinIndex = 0;
+		killModule.lv11fix_GriffinDetected = false;
+		killModule.lv11fix_MuroDetected = false;
+		killModule.KonokoFraction = 0;
 
 		core.onTimerStarted += killModule.OnStartHandle;
+		core.onLevelLoad += killModule.OnLevelLoadHandle;
+		core.onAiDetected += killModule.OnAiDetectedHandle;
+		core.onUpdateEnds += killModule.OnUpdateEndsHandle;
 
-		core.onUpdate += killModule.OnUpdateHandle;
+		core.onUpdateBegins += killModule.OnUpdateBeginsHandle;
 		print(killModule.EnableTriggerName + " Activated");
 	});
 	killModule.Deactivate = (Action)(() => {
 		core.onTimerStarted -= killModule.OnStartHandle;
+		core.onLevelLoad -= killModule.OnLevelLoadHandle;
+		core.onAiDetected -= killModule.OnAiDetectedHandle;
+		core.onUpdateEnds -= killModule.OnUpdateEndsHandle;
 
-		core.onUpdate -= killModule.OnUpdateHandle;
+		core.onUpdateBegins -= killModule.OnUpdateBeginsHandle;
 		print(killModule.EnableTriggerName + " Deactivated");
 	});
 	
@@ -309,11 +323,11 @@ init
 			|| core.Old.LevelIndex == core.Current.LevelIndex){
 			if (core.Current.save_point == "" || core.Current.save_point == "Syndicate Warehouse")
 			{
-				vars.TimerModel.Reset();
 				perLevelModule.PreventDefaultTimerBehavior = true;
 				perLevelModule.TimerHasToBeZero = true;
 				perLevelModule.CurrentRunningLevel = core.Current.LevelIndex;
 				perLevelModule.LoadedLevelIsNotForRun = false; 
+				vars.TimerModel.Reset();
 				vars.TimerModel.Start();
 			}
 		}
@@ -321,18 +335,18 @@ init
 		if (perLevelModule.CurrentRunningLevel != core.Current.LevelIndex) 
 		{
 			if (perLevelModule.LoadedLevelIsNotForRun == false){
-				vars.TimerModel.Split(); 
-				vars.TimerModel.Pause(); 
 				perLevelModule.PreventDefaultTimerBehavior = true;		
 				perLevelModule.LoadedLevelIsNotForRun = true;	
+				vars.TimerModel.Split(); 
+				vars.TimerModel.Pause(); 
 			}				
 		}	
 	});
-	perLevelModule.OnUpdateHandle = (Action)(() => {
+	perLevelModule.OnUpdateBeginsHandle = (Action)(() => {
 		perLevelModule.PreventDefaultTimerBehavior = false;
 		perLevelModule.TimerHasToBeZero &= core.Current.potentialLoadingBlindPoint; 
 	});
-	perLevelModule.OnBeforeCycleEndHandle = (Action)(() => {
+	perLevelModule.OnUpdateEndsHandle = (Action)(() => {
 		if (perLevelModule.PreventDefaultTimerBehavior){
 			core.RaiseSplit = false;
 			core.NeedReset = false;
@@ -346,9 +360,9 @@ init
 		core.onLevelProgress += perLevelModule.OnLevelProgressHandle;
 		core.onTimerStarted += perLevelModule.OnStartHandle;
 		core.onLevelLoad += perLevelModule.OnLevelLoadHandle;
-		core.onUpdate += perLevelModule.OnUpdateHandle;
+		core.onUpdateBegins += perLevelModule.OnUpdateBeginsHandle;
 		core.onEnd += perLevelModule.OnEndHandle;
-		core.onBeforeCycleEnd += perLevelModule.OnBeforeCycleEndHandle;
+		core.onUpdateEnds += perLevelModule.OnUpdateEndsHandle;
 		core.LevelProgress = 0;
 		perLevelModule.PreventDefaultTimerBehavior = true;
 		perLevelModule.TimerHasToBeZero = true;
@@ -361,9 +375,9 @@ init
 		core.onLevelProgress -= perLevelModule.OnLevelProgressHandle;
 		core.onTimerStarted -= perLevelModule.OnStartHandle;
 		core.onLevelLoad -= perLevelModule.OnLevelLoadHandle;
-		core.onUpdate -= perLevelModule.OnUpdateHandle;
+		core.onUpdateBegins -= perLevelModule.OnUpdateBeginsHandle;
 		core.onEnd -= perLevelModule.OnEndHandle;
-		core.onBeforeCycleEnd -= perLevelModule.OnBeforeCycleEndHandle;
+		core.onUpdateEnds -= perLevelModule.OnUpdateEndsHandle;
 		core.LevelProgress = 0;
 		vars.TimerModel.Reset();
 		print(perLevelModule.EnableTriggerName + " Deactivated");
@@ -414,8 +428,8 @@ init
 			core.Old = _o;
 			core.Current = _c;
 
-			if (core.onUpdate != null) 
-				core.onUpdate();
+			if (core.onUpdateBegins != null) 
+				core.onUpdateBegins();
 
 			IntPtr konokoPtr = vars.konokoPtr;
 			if (core.Current.levelId == 0){
@@ -452,6 +466,41 @@ init
 				}
 			}	
 
+			var firstChrMonitored = false;
+			var oniCharsMaximumCount = 128;
+			var oniCharsBlockSize = 0x16A0;
+			for (var i = 0; i < oniCharsMaximumCount; i++)
+			{
+				var index = game.ReadValue<byte>(konokoPtr); // Chr list index, from 0 - konoko to max 128. May be gaps, the game could fill gaps.
+				
+				if (index == 0 && firstChrMonitored){
+					konokoPtr += oniCharsBlockSize	;
+					continue;
+				}
+
+				var hp = game.ReadValue<int>(konokoPtr + 0x38); // HP, yep
+				var objectId = game.ReadValue<byte>(konokoPtr + 0x1); // Object ID, id qnique during 1 level session (till load/reload). It's not gurantee same id for same enemy
+				var activeState = game.ReadValue<byte>(konokoPtr + 0x1F0); // 0 - dead, 1 - ready to fight, 3 - inactive
+				var fraction = game.ReadValue<byte>(konokoPtr + 0x12); // see konoko fraction
+				var name = game.ReadString(konokoPtr + 0x14, 10); // I think 10 is enough
+
+				if (core.onAiDetected != null){
+					dynamic ai = new ExpandoObject();
+
+					ai.Hp = hp;
+					ai.Index = index;
+					ai.ObjectId = objectId;
+					ai.ActiveState = activeState;
+					ai.Fraction = fraction;
+					ai.Name = name;
+
+					core.onAiDetected(ai);
+				}
+
+				firstChrMonitored = true;
+				konokoPtr += oniCharsBlockSize	;
+			}
+			
  
 			if (core.Current.LevelIndex - 1 == core.LevelProgress && 
 				(core.Current.save_point == "" || core.Current.save_point == "Syndicate Warehouse")){ 
@@ -479,8 +528,8 @@ init
 			if (vars.Core.TrainingLevel.HelloKonoko())
 				core.FreezeTime = true;
 
-			if (core.onBeforeCycleEnd != null)
-				core.onBeforeCycleEnd();
+			if (core.onUpdateEnds != null)
+				core.onUpdateEnds();
 		});
 
 		vars.Core.SetStart = (Action) (() => {
