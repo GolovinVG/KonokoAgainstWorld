@@ -12,11 +12,12 @@ state("Oni", "EN")
 	int konoko_hp : 0x236514, 0x38;
 	int konoko_shield : 0x230FE8;
 	int enemy_hp : 0x23a2a0, 0x38;
-	bool endcheck : 0x1EC0C4; // check Muro kill
+	bool beginCutcheneCalled : 0x1EC0C4; // show 2 black mocie style stripes , helps check Muro kill
 	int time : 0x2582C0; // ingame time, set 0 on manualy loading level. updates not so frequently, so ignored most times
 	bool cutscene : 0x14D64C;
 	int dialog : 0x236514, 0x04;
 	bool level5_endCutscene : 0x1ECE92;
+	byte camera_offset : 0x1EB73F; //0 - kamera locked behind
 
 	//variables below have obscure meaning, so i describe what I have searched with cheat engine
 	//I'm not so sure that I found out what it is, that why it often ensured by other conditions
@@ -26,6 +27,7 @@ state("Oni", "EN")
 	byte startLogo : 0x15FD44; // tried to catch after loading logo
 	bool lockedPlayerActivity : 0x1EC0C4; // most likely this flag prevents player from do anything, including call a menu
 	bool pausedByPlayer: 0x1E96BC; // anu menu called including F1
+	int playingSound: 0x220098;
 
 	//OBSOLETE
 	//int level : 0x1ED398; // conflicts with levelId and changed too late on loading process
@@ -39,7 +41,7 @@ state("Oni", "RU")
 	ulong anim : 0x1E70C4;
 	string20 save_point: 0x1E8580;
 	
-	bool endcheck : 0x1E7A78;
+	bool beginCutcheneCalled : 0x1E7A78;
 	
 	float coord_x : 0x1e87d4, 0xB0, 0xC4;
 	float coord_y : 0x1e87d4, 0xB0, 0xCC;
@@ -109,9 +111,11 @@ startup {
 	vars.Core.NeedReset = false; 
 	vars.Core.LevelProgress = 0; // index of where plauer plaed last continiously
 	vars.Core.ActivatedModules = new List<string>(); 
-	vars.Core.SwitchLevel = false;
 	vars.Core.TimerPaused = true;
 	vars.Core.MuroKilled = false;
+	vars.Core.FreezeTime = false;
+	vars.Core.probablyPauseDetectionGap = false;
+	vars.TimerPaused = false;
 }
  
 init
@@ -135,22 +139,14 @@ init
 	}
 
 	var page = modules.First();
-	vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x00236514); // konoko firs in character list
+	vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x00236514); // konoko firs in character list 
 
 	current.IsLoading = false;
-	current.IsLoaded = false;
+	current.LoadingBegan = false;
 	current.KillsCount = 0;
 	vars.KillsCount = 0;
 	current.LevelIndex = 0;
 
-// on load weird thing is happening
-// loading >>> levelId set to 0 >>> levelId set to smth
-// >>> no locks but no flags (may be some, but not obvious too shoort to capture with naked eye)
-// >>> cutscene locks >>> free to go
-// so we capture moment of levelId change to pause timet, and unlock when normal locks available or none if loading from numbered save point
-	current.potentialLoadingBlindPoint = false; 
-	current.potentialLoadingBlindPointSwitch = false; 
-	
 	var core = vars.Core;
 
 	dynamic mainModule = new ExpandoObject();
@@ -160,20 +156,17 @@ init
 		core.onLevelProgress += (Action)(() => {
 			core.RaiseSplit = true;
 		});
+		core.onLevelLoad += (Action)(() => {
+			if (core.Current.LevelIndex == 0){
+				core.NeedReset = true;
+				core.LevelProgress = 0;
+			}
+
+		});
 		core.onEnd += (Action)(() => {
 			core.RaiseSplit = true;
 		});
 		core.onUpdateBegins += (Action)(() => {
-			
-			if (core.Current.LevelIndex == 0 
-				&& core.Current.anim == 0xC3A90FA5C48C7D82 
-				&& core.Old.anim != 0xC3A90FA5C48C7D82){
-				core.NeedReset = true;
-				core.NeedStart = true;
-				core.LevelProgress = 0;
-			}
-
-			IntPtr konokoPtr = vars.konokoPtr;
 			var coord_xpow = (float)Math.Pow(core.Current.coord_x, 2);
 			var coord_ypow = (float)Math.Pow(core.Current.coord_y, 2);
 				
@@ -195,7 +188,7 @@ init
 		for (var i = 0; i < killsperLevel.Length; i++)
 			if (killsperLevel[i].Any())
 				killsperLevel[i].Clear();
-		current.KillsCount = 0; // sometimes clear lags 	
+		current.KillsCount = 0; // sometimes clear lags 
 		print("Clear Kills");
 		});
 	killModule.OnLevelLoadHandle = (Action)(() => {
@@ -304,9 +297,9 @@ init
 
 #region PerLevelTimer
 	dynamic perLevelModule = new ExpandoObject();
-	core.Modules.Add(perLevelModule); 
+	core.Modules.Add(perLevelModule);
 	perLevelModule.EnableTriggerName = "TimerPerLevel_Module";
-	perLevelModule.OnLevelProgressHandle = (Action)(() =>{ 
+	perLevelModule.OnLevelProgressHandle = (Action)(() =>{
 		perLevelModule.LockTimer = true;	
 	});
 	perLevelModule.OnEndHandle = (Action)(() =>{ 
@@ -318,6 +311,7 @@ init
 			vars.TimerModel.SkipSplit();
 	});
 	perLevelModule.OnLevelLoadHandle = (Action)(() =>{
+		print("TimerPerLevel_Module_LevelLoadHandle");
 		if (perLevelModule.CurrentRunningLevel == -1
 			|| perLevelModule.CurrentRunningLevel == core.Current.LevelIndex
 			|| core.Old.LevelIndex == core.Current.LevelIndex){
@@ -380,6 +374,7 @@ init
 		core.onUpdateEnds -= perLevelModule.OnUpdateEndsHandle;
 		core.LevelProgress = 0;
 		vars.TimerModel.Reset();
+		core.FreezeTime = false;
 		print(perLevelModule.EnableTriggerName + " Deactivated");
 	});
 	
@@ -388,12 +383,13 @@ init
 #region Core 
 		vars.Core.CheckPause = (Func<bool>)(() => {
 			if (core.Current.LevelIndex == 0)
-				return core.TrainingLevel.HelloKonoko() 
-					|| vars.Core.GameShowsUnplayebleStuff()
-					|| vars.Core.CutsceneIsPlaying()
-					|| vars.Core.PlayerHasNoMouseControl()
-					|| vars.Core.UnscippableDialogue()
-					|| core.Current.potentialLoadingBlindPoint;
+				return core.CutsceneIsPlaying()
+					|| core.PlayerHasNoMouseControl()
+					|| core.UnscippableDialogue() 
+					|| core.GamePaused()
+					|| core.GameShowsUnplayebleStuff()
+					|| core.CameraUnlocked()
+					|| core.probablyPauseDetectionGap; 
 
 			
 			return core.CutsceneIsPlaying()
@@ -402,7 +398,8 @@ init
 				|| core.UnscippableDialogue() 
 				|| core.GamePaused()
 				|| core.GameShowsUnplayebleStuff()
-				|| core.Current.potentialLoadingBlindPoint;
+				|| core.CameraUnlocked()
+				|| core.probablyPauseDetectionGap;
 		}); 
 		vars.Core.CheckModules = (Action)(() => {
 			foreach (var module in core.Modules)
@@ -420,46 +417,27 @@ init
 			}
 		});
 
-		// _c - currentState, most likely dont lose it reference, but I chose to transfer ref to standartify approach
+		// _c - currentState, most likely dont lose it reference, but I chose to transfer ref to standartify approach 
 		// _o - old state, miss reference each update =(
 		vars.Core.Update = (Action<ExpandoObject, ExpandoObject>)((_c, _o) => {
 			core.CheckModules();
-
 			core.Old = _o;
 			core.Current = _c;
-
 			if (core.onUpdateBegins != null) 
 				core.onUpdateBegins();
 
-			IntPtr konokoPtr = vars.konokoPtr;
 			if (core.Current.levelId == 0){
-				vars.Core.SwitchLevel = true;
-				core.Current.potentialLoadingBlindPoint = true;  
-				core.Current.potentialLoadingBlindPointSwitch = false;  
 			}else{
 				var cLevelInGameIndex = core.GetIngameLevelId();
 				dynamic cLevel = core.FindLevel((byte)cLevelInGameIndex);
 				core.Current.LevelIndex = cLevel.Index;
 			}
-			var detectedKonoko = game.ReadValue<byte>(konokoPtr + 0x14) != 0; // Konoko briefly lose her name on level loading  
-			core.Current.IsLoading |= !detectedKonoko;
 
-			
-			core.Current.potentialLoadingBlindPointSwitch |= core.PlayerHasNoMouseControl();
-			core.Current.potentialLoadingBlindPoint &= 
-				!(core.Current.save_point == ""|| core.Current.save_point == "Syndicate Warehouse") 
-				|| !core.Current.potentialLoadingBlindPointSwitch; 
-
-
-			core.Current.IsLoaded = core.Current.levelId != 0 // level obtain index 
-			 	&& vars.Core.SwitchLevel // recently index was 0 
-				&& core.Current.IsLoading // konoko 0 info detected
-				&& detectedKonoko; // but now it has value
-
-			if (core.Current.IsLoaded){
+			if (core.Current.levelId != 0 && core.Old.levelId == 0){
 				print("on level load");
-				core.Current.IsLoading = false;
-				vars.Core.SwitchLevel = false;
+				if (core.Current.save_point == "" || core.Current.save_point == "Syndicate Warehouse")
+					core.probablyPauseDetectionGap = true; 
+
 				if(core.onLevelLoad != null)
 				{
 					core.onLevelLoad(); 						
@@ -469,20 +447,21 @@ init
 			var firstChrMonitored = false;
 			var oniCharsMaximumCount = 128;
 			var oniCharsBlockSize = 0x16A0;
+			IntPtr aiPointerIteratpr = vars.konokoPtr;
 			for (var i = 0; i < oniCharsMaximumCount; i++)
 			{
-				var index = game.ReadValue<byte>(konokoPtr); // Chr list index, from 0 - konoko to max 128. May be gaps, the game could fill gaps.
+				var index = game.ReadValue<byte>(aiPointerIteratpr); // Chr list index, from 0 - konoko to max 128. May be gaps, the game could fill gaps.
 				
 				if (index == 0 && firstChrMonitored){
-					konokoPtr += oniCharsBlockSize	;
+					aiPointerIteratpr += oniCharsBlockSize	;
 					continue;
 				}
 
-				var hp = game.ReadValue<int>(konokoPtr + 0x38); // HP, yep
-				var objectId = game.ReadValue<byte>(konokoPtr + 0x1); // Object ID, id qnique during 1 level session (till load/reload). It's not gurantee same id for same enemy
-				var activeState = game.ReadValue<byte>(konokoPtr + 0x1F0); // 0 - dead, 1 - ready to fight, 3 - inactive
-				var fraction = game.ReadValue<byte>(konokoPtr + 0x12); // see konoko fraction
-				var name = game.ReadString(konokoPtr + 0x14, 10); // I think 10 is enough
+				var hp = game.ReadValue<int>(aiPointerIteratpr + 0x38); // HP, yep
+				var objectId = game.ReadValue<byte>(aiPointerIteratpr + 0x1); // Object ID, id qnique during 1 level session (till load/reload). It's not gurantee same id for same enemy
+				var activeState = game.ReadValue<byte>(aiPointerIteratpr + 0x1F0); // 0 - dead, 1 - ready to fight, 3 - inactive
+				var fraction = game.ReadValue<byte>(aiPointerIteratpr + 0x12); // see konoko fraction
+				var name = game.ReadString(aiPointerIteratpr + 0x14, 10); // I think 10 is enough
 
 				if (core.onAiDetected != null){
 					dynamic ai = new ExpandoObject();
@@ -498,7 +477,7 @@ init
 				}
 
 				firstChrMonitored = true;
-				konokoPtr += oniCharsBlockSize	;
+				aiPointerIteratpr += oniCharsBlockSize;
 			}
 			
  
@@ -511,60 +490,67 @@ init
 					}
 				}
 
+
+			
 			var muroKilledOld = core.MuroKilled;
 			core.MuroKilled |= core.Current.LevelIndex == 14 
 				&& core.Current.save_point.Contains("4") 
-				&& core.Current.endcheck == true;
+				&& core.Current.beginCutcheneCalled == true;
 			if (muroKilledOld != core.MuroKilled){
 				core.LevelProgress = 0;
 				if (core.onEnd != null){
 					print("RIP MURO");
 					core.onEnd();
 				}
+			}  
+			if (core.probablyPauseDetectionGap){ 
+				switch((int)core.Current.LevelIndex){
+					case 1: case 2: case 3: case 4: case 6: case 8: case 9: case 10: case 11: case 12: case 13: 
+						core.probablyPauseDetectionGap &= !core.CutsceneIsPlaying(); break;
+					case 5: case 7: case 14: 
+						core.probablyPauseDetectionGap &= core.CameraUnlocked(); break;
+					default: core.probablyPauseDetectionGap = false; break;
+				}
+
 			}
-
 			core.TimerPaused = core.CheckPause();
-
-			if (vars.Core.TrainingLevel.HelloKonoko())
-				core.FreezeTime = true;
-
+			
 			if (core.onUpdateEnds != null)
 				core.onUpdateEnds();
 		});
 
 		vars.Core.SetStart = (Action) (() => {
-			current.potentialLoadingBlindPoint = true;
 			core.MuroKilled = false;
 			if (core.onTimerStarted != null)
 				core.onTimerStarted(); 
 		});
 
 		vars.Core.GamePaused = (Func<bool>)(() =>
-			current.pausedByPlayer || current.time == 0
+			current.pausedByPlayer || current.time == 0 || current.levelId == 0
 		);
 		vars.Core.GameShowsUnplayebleStuff = (Func<bool>)(() =>
-			current.lockedPlayerActivity || current.deathLogo != 1 || current.startLogo != 1  || current.IsLoading);
+			current.lockedPlayerActivity || current.deathLogo != 1 || current.startLogo != 1 || current.IsLoading
+		); 
 		vars.Core.CutsceneIsPlaying = (Func<bool>)(() =>
-			current.level5_endCutscene
+			current.level5_endCutscene || current.beginCutcheneCalled
 		);
 		vars.Core.PlayerHasNoMouseControl = (Func<bool>)(() => 
 			current.igtPause == 0 
 		);
 		vars.Core.PlayerHasNoKeyboardControl = (Func<bool>)(() => 
-			current.keysLocked == 0x10007 // unlock pause only 
+			current.keysLocked == 0x10007 // unlock pause only
 			|| current.keysLocked == 0x10003 // lockall
 		);
 		vars.Core.UnscippableDialogue = (Func<bool>)(() =>
 			current.dialog == 0x1081E000
+		);
+		vars.Core.CameraUnlocked = (Func<bool>)(() =>
+			current.camera_offset != 0
 		); 
 		
 		// first level and training are same, so let introduse fake 0 index
 		vars.Core.GetIngameLevelId = (Func<byte>)(() =>
 			current.levelId == 1 && current.save_point == "" ? (byte)0 : (byte)current.levelId 
-		);
-		vars.Core.TrainingLevel = new ExpandoObject();
-		vars.Core.TrainingLevel.HelloKonoko = (Func<bool>)(() =>
-			current.anim == 0xC3A90FA5C48C7D82
 		);
 
 #endregion
@@ -589,6 +575,7 @@ start
 
 onStart{
 	vars.Core.SetStart();
+	vars.Core.FreezeTime = true;
 }
 
 reset
@@ -596,9 +583,11 @@ reset
 	if (vars.Core.NeedReset) 
 	{
 		vars.Core.NeedReset = false;
+		vars.Core.NeedStart = true;
 		print("RESET");
 		return true;	
 	}	
+	return false;
 }
 
 split
@@ -611,12 +600,15 @@ split
 	}
 }
 
-isLoading {
-	current.TimerPaused = vars.Core.TimerPaused;
+isLoading { 
+	vars.TimerPaused = vars.Core.TimerPaused; 
 	return vars.Core.TimerPaused;
 } 
 
 gameTime{
 	if (vars.Core.FreezeTime)
-		return TimeSpan.Zero; 
+		{
+			vars.Core.FreezeTime = false; 
+			return TimeSpan.Zero; 
+		}
 }
