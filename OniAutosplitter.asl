@@ -115,7 +115,6 @@ startup {
 	vars.Core.MuroKilled = false;
 	vars.Core.FreezeTime = false;
 	vars.Core.probablyPauseDetectionGap = false;
-	vars.TimerPaused = false;
 }
  
 init
@@ -157,8 +156,12 @@ init
 			core.RaiseSplit = true;
 		});
 		core.onLevelLoad += (Action)(() => {
-			if (core.Current.LevelIndex == 0){
-				core.NeedReset = true;
+			if (core.Current.LevelIndex == 0){				
+				if (timer.CurrentPhase == TimerPhase.Running || timer.CurrentPhase == TimerPhase.Paused)
+					core.NeedReset = true;
+				else
+					core.NeedStart = true;
+
 				core.LevelProgress = 0;
 			}
 
@@ -382,24 +385,16 @@ init
 
 #region Core 
 		vars.Core.CheckPause = (Func<bool>)(() => {
-			if (core.Current.LevelIndex == 0)
-				return core.CutsceneIsPlaying()
-					|| core.PlayerHasNoMouseControl()
-					|| core.UnscippableDialogue() 
-					|| core.GamePaused()
-					|| core.GameShowsUnplayebleStuff()
-					|| core.CameraUnlocked()
-					|| core.probablyPauseDetectionGap; 
-
-			
-			return core.CutsceneIsPlaying()
+			if (core.CutsceneIsPlaying()
 				|| core.PlayerHasNoMouseControl()
-				|| core.PlayerHasNoKeyboardControl()	
 				|| core.UnscippableDialogue() 
 				|| core.GamePaused()
 				|| core.GameShowsUnplayebleStuff()
 				|| core.CameraUnlocked()
-				|| core.probablyPauseDetectionGap;
+				|| core.probablyPauseDetectionGap)
+				return true;
+
+			return core.Current.LevelIndex != 0 && core.PlayerHasNoKeyboardControl();
 		}); 
 		vars.Core.CheckModules = (Action)(() => {
 			foreach (var module in core.Modules)
