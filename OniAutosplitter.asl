@@ -96,7 +96,7 @@ startup {
 			levels.First(x => inGameIndex == ((dynamic)x).InGameIndex) 
 		);
 
-	vars.Core.RaiseSplit = false; 
+	vars.Core.NeedSplit = false; 
 
 	vars.Core.onLevelLoad = (Action)(() => {});
 	vars.Core.onLevelProgress = (Action)(() => {});
@@ -138,7 +138,7 @@ init
 	}
 
 	var page = modules.First();
-	vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x00236514); // konoko firs in character list 
+	vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x00236514); // konoko firs in character list
 
 	current.IsLoading = false;
 	current.LoadingBegan = false;
@@ -153,21 +153,25 @@ init
 	mainModule.EnableTriggerName = "Main";
 	mainModule.Init = (Action)(() => {
 		core.onLevelProgress += (Action)(() => {
-			core.RaiseSplit = true;
+			core.NeedSplit = true;
 		});
 		core.onLevelLoad += (Action)(() => {
 			if (core.Current.LevelIndex == 0){				
-				if (timer.CurrentPhase == TimerPhase.Running || timer.CurrentPhase == TimerPhase.Paused)
-					core.NeedReset = true;
-				else
+				if (timer.CurrentPhase == TimerPhase.NotRunning)
 					core.NeedStart = true;
-
+				else if (timer.CurrentPhase == TimerPhase.Ended)
+				{
+					vars.TimerModel.Reset();
+					core.NeedStart = true;
+				}
+				else
+					core.NeedReset = true;
+					
 				core.LevelProgress = 0;
 			}
-
 		});
 		core.onEnd += (Action)(() => {
-			core.RaiseSplit = true;
+			core.NeedSplit = true;
 		});
 		core.onUpdateBegins += (Action)(() => {
 			var coord_xpow = (float)Math.Pow(core.Current.coord_x, 2);
@@ -345,7 +349,7 @@ init
 	});
 	perLevelModule.OnUpdateEndsHandle = (Action)(() => {
 		if (perLevelModule.PreventDefaultTimerBehavior){
-			core.RaiseSplit = false;
+			core.NeedSplit = false;
 			core.NeedReset = false;
 			core.NeedStart = false;
 		}
@@ -573,8 +577,7 @@ onStart{
 	vars.Core.FreezeTime = true;
 }
 
-reset
-{
+reset{
 	if (vars.Core.NeedReset) 
 	{
 		vars.Core.NeedReset = false;
@@ -587,9 +590,9 @@ reset
 
 split
 {
-	if (vars.Core.RaiseSplit)
+	if (vars.Core.NeedSplit)
 	{		
-		vars.Core.RaiseSplit = false;
+		vars.Core.NeedSplit = false;
 		print("SPLIT" + vars.Core.LevelProgress); 
 		return true;
 	}
