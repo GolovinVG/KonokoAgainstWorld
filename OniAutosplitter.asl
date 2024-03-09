@@ -338,14 +338,15 @@ init
 			if (perLevelModule.LoadedLevelIsNotForRun == false){
 				perLevelModule.PreventDefaultTimerBehavior = true;		
 				perLevelModule.LoadedLevelIsNotForRun = true;	
-				vars.TimerModel.Split(); 
+				if (perLevelModule.CurrentRunningLevel != 14)
+					vars.TimerModel.Split(); 
 				vars.TimerModel.Pause(); 
 			}				
 		}	
 	});
 	perLevelModule.OnUpdateBeginsHandle = (Action)(() => {
 		perLevelModule.PreventDefaultTimerBehavior = false;
-		perLevelModule.TimerHasToBeZero &= core.Current.potentialLoadingBlindPoint; 
+		perLevelModule.TimerHasToBeZero &= core.probablyPauseDetectionGap; 
 	});
 	perLevelModule.OnUpdateEndsHandle = (Action)(() => {
 		if (perLevelModule.PreventDefaultTimerBehavior){
@@ -365,6 +366,7 @@ init
 		core.onEnd += perLevelModule.OnEndHandle;
 		core.onUpdateEnds += perLevelModule.OnUpdateEndsHandle;
 		core.LevelProgress = 0;
+		
 		perLevelModule.PreventDefaultTimerBehavior = true;
 		perLevelModule.TimerHasToBeZero = true;
 		perLevelModule.LoadedLevelIsNotForRun = true; // only repeatedly loading same level cause timer to start
