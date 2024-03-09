@@ -16,7 +16,6 @@ state("Oni", "EN")
 	int time : 0x2582C0; // ingame time, set 0 on manualy loading level. updates not so frequently, so ignored most times
 	bool cutscene : 0x14D64C;
 	int dialog : 0x236514, 0x04;
-	bool level5_endCutscene : 0x1ECE92;
 	byte camera_offset : 0x1EB73F; //0 - kamera locked behind
 
 	//variables below have obscure meaning, so i describe what I have searched with cheat engine
@@ -32,6 +31,7 @@ state("Oni", "EN")
 	//OBSOLETE
 	//int level : 0x1ED398; // conflicts with levelId and changed too late on loading process
 	//int cutsceneSegment : 0x2364C4; // not used
+	//bool level5_endCutscene : 0x1ECE92; // actually this is GOD mode flag
 }
 
 //TODO need redo mem refs
@@ -531,7 +531,7 @@ init
 			current.lockedPlayerActivity || current.deathLogo != 1 || current.startLogo != 1 || current.IsLoading
 		); 
 		vars.Core.CutsceneIsPlaying = (Func<bool>)(() =>
-			current.level5_endCutscene || current.beginCutcheneCalled
+			current.beginCutcheneCalled
 		);
 		vars.Core.PlayerHasNoMouseControl = (Func<bool>)(() => 
 			current.igtPause == 0 
