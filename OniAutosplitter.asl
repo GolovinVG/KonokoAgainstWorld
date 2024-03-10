@@ -55,9 +55,9 @@ state("Oni", "RU")
 startup {
 	vars.TimerModel = new TimerModel { CurrentState = timer };
 
-	settings.Add("KillsCount_Module", true, "Enables Konoko's foe kills cointing", null);
+	settings.Add("KillsCount_Module", true, "\"Kill Count\" Module - foe kills cointing (Current State / KillsCount)", null);
 	settings.Add("EnableTrainingKillsCount", false, "Enables training level kills cointing", "KillsCount_Module");
-	settings.Add("TimerPerLevel_Module", false, "Time strats on level load and resets on next level", null);
+	settings.Add("TimerPerLevel_Module", false, "\"Perlevel timer\" Module - focus timer on repeating level", null);
 	
 	var levels = new List<ExpandoObject>();
 	var addLevel = (Action<int, int, string>)((index, igIndex, name) => {
