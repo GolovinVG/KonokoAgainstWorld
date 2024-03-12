@@ -168,7 +168,7 @@ startup {
 			if (killsperLevel[i].Any())
 				killsperLevel[i].Clear();
 		core.Current.KillsCount = 0;
-		print("Clear Kills");
+		print("Clear Kills by restart");
 		});
 	killModule.OnLevelLoadHandle = (Action)(() => {
 		var killsperLevel = killModule.KillsPerLevel as HashSet<byte>[];
@@ -197,30 +197,30 @@ startup {
 		if (ai.Index == 0){
 			killModule.KonokoFraction = ai.Fraction; // 0 - konoko, 1 - TCTF, 2 - Cynd, 3 - Civilian, 4 - guard, 5 - Rogue Konoko, 6 - ?, 7 - unagressive Cyndicate 
 		}
+		else{
+			if (killsperLevel[core.Current.LevelIndex].Contains(ai.ObjectId) == false
+				&& ai.Hp == 0 
+				&& (ai.Fraction == 2  
+					|| (ai.Fraction == 1 || ai.Fraction == 4) && killModule.KonokoFraction == 5
+					|| killModule.KonokoFraction == 2 && core.Current.LevelIndex == 0)) // training level fraction swap
+						{
+							print("poor " + ai.Name);
+							killsperLevel[core.Current.LevelIndex].Add(ai.ObjectId);
+						}
+			//Muro and Griffin fix. on DD lvl the game just delete them, leaves no record with 0 hp
+			if (core.Current.LevelIndex == 11){
+				if (ai.Name.Equals("IntroMuro")) {
+						killModule.lv11fix_MuroIndex = ai.Index;
+						killModule.lv11fix_MuroDetected = true;
+					}	
 
-		if ((core.Settings["EnableTrainingKillsCount"] || core.Current.LevelIndex != 0)
-			&& killsperLevel[core.Current.LevelIndex].Contains(ai.ObjectId) == false
-			&& ai.Hp == 0 
-			&& (ai.Fraction == 2  
-				|| (ai.Fraction == 1 || ai.Fraction == 4) && killModule.KonokoFraction == 5
-				|| killModule.KonokoFraction == 2 && core.Current.LevelIndex == 0)) // training level fraction swap
-					{
-						print("poor " + ai.Name);
-						killsperLevel[core.Current.LevelIndex].Add(ai.ObjectId);
-					}
-		//Muro and Griffin fix. on DD lvl the game just delete them, leaves no record with 0 hp
-		if (core.Current.LevelIndex == 11){
-			if (ai.Name.Equals("IntroMuro")) {
-					killModule.lv11fix_MuroIndex = ai.Index;
-					killModule.lv11fix_MuroDetected = true;
-				}	
-
-			if (ai.Name.Equals("griffin")){
-				killModule.lv11fix_GriffinIndex = ai.Index;
-				killModule.lv11fix_GriffinDetected = true;
-			}
-				
-		}	
+				if (ai.Name.Equals("griffin")){
+					killModule.lv11fix_GriffinIndex = ai.Index;
+					killModule.lv11fix_GriffinDetected = true;
+				}
+					
+			}	
+		}
 	});
 	killModule.OnUpdateEndsHandle = (Action)(() =>{		
 		var killsperLevel = killModule.KillsPerLevel as HashSet<byte>[];
@@ -244,7 +244,7 @@ startup {
 			}
 		}
 		/*
-		for (var i = 0; i<14; i++){
+		for (var i = 0; i<15; i++){
 			if (killsperLevel[i].Any()){
 				print(string.Format("({0}) - {1}", i, string.Join(", ", killsperLevel[i]))); 
 			}
@@ -454,8 +454,6 @@ init
 		version = "EN";
 	}
 	
-	var page = modules.First();
-	vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x00236514); // konoko firs in character list
 	current.IsLoading = false;
 	current.LoadingBegan = false;
 	current.KillsCount = 0;
@@ -464,6 +462,7 @@ init
 	current.Konoko_HP_Shield = "0/0";
 	current.Enemy_HP = 0;
 	timer.IsGameTimePaused = false;
+	vars.konokoPtr = IntPtr.Zero;
 }
 
 update 
@@ -476,8 +475,8 @@ update
 	if (core.onUpdateBegins != null) 
 		core.onUpdateBegins();
 
-	if (
-		core.Current.levelId == 0){
+	if (core.Current.levelId == 0){
+		return;
 	}else{
 		var cLevelInGameIndex = core.GetIngameLevelId();
 		dynamic cLevel = core.FindLevel((byte)cLevelInGameIndex);
@@ -494,42 +493,42 @@ update
 			core.onLevelLoad(); 						
 		}
 	}	
-
 	var firstChrMonitored = false;
 	var oniCharsMaximumCount = 128;
 	var oniCharsBlockSize = 0x16A0;
 	IntPtr aiPointerIteratpr = vars.konokoPtr;
-	for (var i = 0; i < oniCharsMaximumCount; i++)
-	{
-		var index = game.ReadValue<byte>(aiPointerIteratpr); // Chr list index, from 0 - konoko to max 128. May be gaps, the game could fill gaps.
-		
-		if (index == 0 && firstChrMonitored){
+	if (aiPointerIteratpr != IntPtr.Zero)
+		for (var i = 0; i < oniCharsMaximumCount; i++)
+		{
+			var index = game.ReadValue<byte>(aiPointerIteratpr); // Chr list index, from 0 - konoko to max 128. May be gaps, the game could fill gaps. 
+			
+			if (index == 0 && firstChrMonitored){
+				aiPointerIteratpr += oniCharsBlockSize;
+				continue;
+			}
+
+			var hp = game.ReadValue<int>(aiPointerIteratpr + 0x38); // HP, yep
+			var objectId = game.ReadValue<byte>(aiPointerIteratpr + 0x1); // Object ID, id qnique during 1 level session (till load/reload). It's not gurantee same id for same enemy
+			var activeState = game.ReadValue<byte>(aiPointerIteratpr + 0x1F0); // 0 - dead, 1 - ready to fight, 3 - inactive
+			var fraction = game.ReadValue<byte>(aiPointerIteratpr + 0x12); // see konoko fraction
+			var name = game.ReadString(aiPointerIteratpr + 0x14, 10); // I think 10 is enough
+
+			if (core.onAiDetected != null){
+				dynamic ai = new ExpandoObject();
+
+				ai.Hp = hp;
+				ai.Index = index;
+				ai.ObjectId = objectId;
+				ai.ActiveState = activeState;
+				ai.Fraction = fraction;
+				ai.Name = name;
+
+				core.onAiDetected(ai);
+			}
+
+			firstChrMonitored = true;
 			aiPointerIteratpr += oniCharsBlockSize;
-			continue;
 		}
-
-		var hp = game.ReadValue<int>(aiPointerIteratpr + 0x38); // HP, yep
-		var objectId = game.ReadValue<byte>(aiPointerIteratpr + 0x1); // Object ID, id qnique during 1 level session (till load/reload). It's not gurantee same id for same enemy
-		var activeState = game.ReadValue<byte>(aiPointerIteratpr + 0x1F0); // 0 - dead, 1 - ready to fight, 3 - inactive
-		var fraction = game.ReadValue<byte>(aiPointerIteratpr + 0x12); // see konoko fraction
-		var name = game.ReadString(aiPointerIteratpr + 0x14, 10); // I think 10 is enough
-
-		if (core.onAiDetected != null){
-			dynamic ai = new ExpandoObject();
-
-			ai.Hp = hp;
-			ai.Index = index;
-			ai.ObjectId = objectId;
-			ai.ActiveState = activeState;
-			ai.Fraction = fraction;
-			ai.Name = name;
-
-			core.onAiDetected(ai);
-		}
-
-		firstChrMonitored = true;
-		aiPointerIteratpr += oniCharsBlockSize;
-	}
 	
 
 	if (core.Current.LevelIndex - 1 == core.LevelProgress && 
@@ -582,6 +581,9 @@ start
 onStart{
 	vars.Core.SetStart();
 	vars.Core.FreezeTime = true;
+	
+	var page = modules.First(x => x.ModuleName.Equals("oni.exe"));
+	vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x236514); // konoko firs in character list 
 }
 
 reset{
