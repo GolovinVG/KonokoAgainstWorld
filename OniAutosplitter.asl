@@ -488,6 +488,10 @@ update
 		if (core.Current.save_point == "" || core.Current.save_point == "Syndicate Warehouse")
 			core.probablyPauseDetectionGap = true; 
 
+	
+		var page = modules.First(x => x.ModuleName.Equals("oni.exe"));
+		vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x236514); // konoko firs in character list 
+		
 		if(core.onLevelLoad != null)
 		{
 			core.onLevelLoad(); 						
@@ -581,9 +585,6 @@ start
 onStart{
 	vars.Core.SetStart();
 	vars.Core.FreezeTime = true;
-	
-	var page = modules.First(x => x.ModuleName.Equals("oni.exe"));
-	vars.konokoPtr = game.ReadPointer(page.BaseAddress + 0x236514); // konoko firs in character list 
 }
 
 reset{
